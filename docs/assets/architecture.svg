@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="685" viewBox="0 0 1200 685" role="img" aria-labelledby="title desc">
+<title id="title">VerifyCraft architecture</title>
+<desc id="desc">Evidence and Verification Engine with model-agnostic, typed contracts, bounded execution, and verifiable results; interfaces CLI, Python SDK, LangGraph Adapter, and GitHub Action.</desc>
+<rect width="100%" height="100%" fill="#fff"/>
+<text x="66" y="48" font-family="Arial, Helvetica, sans-serif" font-size="15" font-weight="700" letter-spacing="2.6" fill="#62718a">VERIFYCRAFT  /  ARCHITECTURE</text>
+<rect x="215" y="76" rx="24" width="770" height="193" fill="#f4f7fc" stroke="#d9e1ee" stroke-width="2"/>
+<rect x="249" y="105" width="55" height="55" rx="14" fill="#e0eaff"/>
+
+<svg x="260" y="116" width="33" height="33" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/></svg>
+<text x="322" y="133" font-family="Arial, Helvetica, sans-serif" font-size="32" font-weight="700" fill="#17253b">Evidence &amp; Verification Engine</text>
+<text x="322" y="167" font-family="Arial, Helvetica, sans-serif" font-size="18" fill="#62718a">One core. Multiple interfaces.</text>
+<line x1="254" y1="193" x2="944" y2="193" stroke="#d9e1ee"/>
+<text x="600" y="230" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="18" fill="#17253b">Model-agnostic · Typed contracts · Bounded execution · Verifiable results</text>
+<line x1="600" y1="269" x2="600" y2="291" stroke="#d9e1ee" stroke-width="2"/>
+
+<svg x="583" y="292" width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="m3 16 4 4 4-4"/><path d="M7 20V4"/><path d="m21 8-4-4-4 4"/><path d="M17 4v16"/></svg>
+<line x1="600" y1="328" x2="600" y2="348" stroke="#d9e1ee" stroke-width="2"/>
+<rect x="65" y="355" rx="19" width="520" height="132" fill="#fff" stroke="#d9e1ee" stroke-width="2"/>
+<rect x="89" y="384" rx="14" width="75" height="75" fill="#f4f7fc"/>
+<svg x="109" y="404" width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="m4 17 6-6-6-6"/><path d="M12 19h8"/></svg>
+<text x="185" y="416" font-family="Arial, Helvetica, sans-serif" font-size="25" font-weight="700" fill="#17253b">CLI</text>
+<text x="185" y="449" font-family="Arial, Helvetica, sans-serif" font-size="19" fill="#62718a">Developers e CI/CD</text>
+<rect x="615" y="355" rx="19" width="520" height="132" fill="#fff" stroke="#d9e1ee" stroke-width="2"/>
+<rect x="639" y="384" rx="14" width="75" height="75" fill="#f4f7fc"/>
+<svg x="659" y="404" width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="m18 16 4-4-4-4"/><path d="m6 8-4 4 4 4"/><path d="m14.5 4-5 16"/></svg>
+<text x="735" y="416" font-family="Arial, Helvetica, sans-serif" font-size="25" font-weight="700" fill="#17253b">Python SDK</text>
+<text x="735" y="449" font-family="Arial, Helvetica, sans-serif" font-size="19" fill="#62718a">Custom AI agents</text>
+<rect x="65" y="505" rx="19" width="520" height="132" fill="#fff" stroke="#d9e1ee" stroke-width="2"/>
+<rect x="89" y="534" rx="14" width="75" height="75" fill="#f4f7fc"/>
+<svg x="109" y="554" width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect width="8" height="8" x="3" y="3" rx="2"/><path d="M7 11v4a2 2 0 0 0 2 2h2"/><rect width="8" height="8" x="13" y="13" rx="2"/><path d="M11 7h4a2 2 0 0 1 2 2v4"/></svg>
+<text x="185" y="566" font-family="Arial, Helvetica, sans-serif" font-size="25" font-weight="700" fill="#17253b">LangGraph Adapter</text>
+<text x="185" y="599" font-family="Arial, Helvetica, sans-serif" font-size="19" fill="#62718a">Agent workflows</text>
+<rect x="615" y="505" rx="19" width="520" height="132" fill="#fff" stroke="#d9e1ee" stroke-width="2"/>
+<rect x="639" y="534" rx="14" width="75" height="75" fill="#f4f7fc"/>
+<svg x="659" y="554" width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="3"/><path d="M6 9v12"/><circle cx="6" cy="21" r="3"/><circle cx="18" cy="18" r="3"/><path d="M18 15V6a3 3 0 0 0-3-3h-3"/></svg>
+<text x="735" y="566" font-family="Arial, Helvetica, sans-serif" font-size="25" font-weight="700" fill="#17253b">GitHub Action</text>
+<text x="735" y="599" font-family="Arial, Helvetica, sans-serif" font-size="19" fill="#62718a">Automated PR review</text>
+</svg>
