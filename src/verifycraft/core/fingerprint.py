@@ -60,7 +60,7 @@ def _parse_diff_file_paths(diff: str | None) -> set[str]:
     paths: set[str] = set()
     for raw_line in diff.splitlines():
         line = raw_line.strip()
-        if line.startswith("--- a/") or line.startswith("+++ b/"):
+        if line.startswith(("--- a/", "+++ b/")):
             raw_path = line[6:].strip()
             if raw_path and raw_path != "/dev/null":
                 paths.add(raw_path)
@@ -237,7 +237,7 @@ def compute_fingerprint(
                 while chunk := f.read(65536):
                     hasher.update(chunk)
             file_hashes[rel_path] = hasher.hexdigest()
-        except (OSError, PermissionError) as err:
+        except OSError as err:
             raise FingerprintError(
                 f"Cannot read file '{rel_path}' for fingerprinting: {err}"
             ) from err

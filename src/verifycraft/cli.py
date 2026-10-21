@@ -153,8 +153,11 @@ def main(argv: Sequence[str] | None = None) -> None:
     if args.subcommand == "verify":
         # Load or construct VerificationInput
         if args.input:
+            input_path = args.input.resolve()
             try:
-                raw_json = args.input.read_text(encoding="utf-8")
+                if not input_path.is_file():
+                    raise FileNotFoundError(f"File not found or not a regular file: {args.input}")
+                raw_json = input_path.read_text(encoding="utf-8")
                 verification_input = VerificationInput.model_validate_json(raw_json)
             except Exception as exc:
                 print(f"Error reading input JSON: {exc}", file=sys.stderr)
