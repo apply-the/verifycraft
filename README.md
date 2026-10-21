@@ -4,7 +4,7 @@
 
 [![Version](https://img.shields.io/github/v/release/apply-the/verifycraft?color=blue&label=version)](https://github.com/apply-the/verifycraft/releases)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
-[![Python: 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
+[![Python: 3.11 | 3.12](https://img.shields.io/badge/python-3.11%20%7C%203.12-blue.svg)](https://www.python.org/downloads/)
 [![CI](https://github.com/apply-the/verifycraft/actions/workflows/ci.yml/badge.svg)](https://github.com/apply-the/verifycraft/actions/workflows/ci.yml)
 [![Lint](https://github.com/apply-the/verifycraft/actions/workflows/lint.yml/badge.svg)](https://github.com/apply-the/verifycraft/actions/workflows/lint.yml)
 [![Vulnerabilities](https://github.com/apply-the/verifycraft/actions/workflows/vulnerabilities.yml/badge.svg)](https://github.com/apply-the/verifycraft/actions/workflows/vulnerabilities.yml)
@@ -19,73 +19,70 @@ Each capability is designed to be useful **standalone** (via CLI and Python SDK)
 
 ---
 
-## Architecture at a Glance
+## What VerifyCraft Does Today
 
-![VerifyCraft Architecture](docs/assets/architecture.svg)
+In version `0.1.0a1`, VerifyCraft delivers the core verification engine (Stage 1 / Stage 2 vertical slice):
 
-At the center is **one capability engine**, exposed through four thin, predictable interfaces:
-
-| Interface | Who uses it | Responsibility |
-| :--- | :--- | :--- |
-| **CLI** | Developers and CI/CD | Run capabilities locally or in pipelines; emit human-readable summaries and machine-readable JSON. |
-| **Python SDK** | Custom AI agents and Python apps | Typed programmatic API with dependency injection. |
-| **LangGraph Adapter** | Agent workflows | Turn capabilities into graph nodes without making LangGraph a mandatory core dependency. |
-| **GitHub Action** | Automated PR review | Run bounded analysis on pull requests and publish evidence-backed findings. |
-
----
-
-## Core Principles
-
-1. **Model-agnostic:** No single provider or model is the source of truth. LLMs are injectable dependencies; deterministic evidence checks are decoupled from model judgment.
-2. **Typed contracts:** Public schemas for inputs, hypotheses, findings, evidence, verdicts, failures, and resource usage.
-3. **Bounded execution:** Configurable caps on time, attempts, model calls, tokens/cost, test scope, and tool permissions.
-4. **Verifiable results:** A model's confidence or consensus is not proof. Findings link directly to test output, static analysis, repository locations, and reproducible commands.
-5. **Composition without lock-in:** Individual capabilities can be called directly, used as standard Python functions, or wired into third-party workflows without a mandatory platform runtime.
-6. **Small public surface:** Focused, predictable interfaces. Integrations remain thin and optional.
-7. **Safe by default:** Repository inspection is read-only by default. Running commands requires explicit execution policies and environment isolation.
-8. **Measurable quality:** New reasoning steps must justify themselves against simple baselines in finding quality, reliability, cost, and latency.
+- **Deterministic Hypothesis Verification**: Evaluates structured regression claims against approved test targets (e.g. `pytest`).
+- **Fail-Closed Verification Scope**: Resolves code context and fingerprints up to 500 relevant repository files, failing closed if limits are exceeded.
+- **Root-Level Module Tracking**: Tracks root-level Python modules and configurations (`*.py`, `pyproject.toml`, `setup.cfg`) alongside `src/` and `tests/` directories.
+- **Categorized Verdicts**: Returns explicit outcome semantics: `supported`, `refuted`, `inconclusive`, or `blocked`.
+- **Hardened Provenance Protection**: Disables caller-provided cached execution evidence as authoritative unless verified by an independent provenance authenticator.
+- **Strict Execution Policies**: Rejects untrusted code under local execution and enforces timeouts, command restrictions, and advisory limits.
+- **Parity Between CLI and SDK**: Shares identical schemas, policies, and engine logic between terminal invocations and Python imports.
 
 ---
 
-## Documentation
+## What is Planned but Not Yet Implemented
 
-Comprehensive design specifications and project planning are available in the [`docs/`](docs/) directory:
+VerifyCraft is developing in sequential outcome-based stages (see [ROADMAP.md](docs/ROADMAP.md)):
 
-- 📘 **[Architecture & Foundations (`docs/FOUNDATIONS.md`)](docs/FOUNDATIONS.md)**
-  - Mission and non-negotiable acceptance criteria
-  - In-scope vs. out-of-scope boundaries
-  - Core abstractions and evidence verdict semantics (`supported`, `refuted`, `inconclusive`, `blocked`)
-  - Execution and security policies
-  - Target repository layout
-
-- 🗺️ **[Roadmap & Delivery Sequence (`docs/ROADMAP.md`)](docs/ROADMAP.md)**
-  - Outcome-based milestone sequence (Stages 0 through 5)
-  - Golden dataset and benchmark definitions
-  - Risk register and mitigation strategies
-  - Initial development backlog
+- ⏳ **LangGraph Adapter (Stage 3)**: Embedding capabilities directly as graph nodes without making LangGraph a mandatory core dependency.
+- ⏳ **GitHub Action (Stage 3)**: Automated pull request review bot running bounded analysis in CI/CD.
+- ⏳ **Composable Review & Test Capabilities (Stage 4)**: Independent `review` (candidate finding generation) and `test` (targeted test proposing).
+- ⏳ **Containerized Isolation (Stage 4/5)**: True kernel sandbox/container execution boundary for untrusted code execution.
+- ⏳ **Multi-Language Support (Stage 5)**: Expanding verification targets beyond Python/pytest.
 
 ---
 
+## Supported Environments
+
+- **Python Versions**: Python 3.11 and 3.12.
+- **Operating Systems**: Linux (Ubuntu), macOS, and Windows.
+
 ---
 
-## Quickstart
+## Installation
 
-### Installation
+### From PyPI (Standard / Production)
 
-VerifyCraft requires Python 3.11+.
+Install VerifyCraft using `pip` or `uv`:
 
 ```bash
-# Clone the repository
+# Using pip
+pip install verifycraft
+
+# Using uv
+uv add verifycraft
+```
+
+### From Source (Development)
+
+```bash
+# Clone repository
 git clone https://github.com/apply-the/verifycraft.git
 cd verifycraft
 
-# Install in development mode with uv or pip
+# Install dependencies using uv (recommended)
 uv sync --extra dev
-# or
+
+# Or using pip
 pip install -e ".[dev]"
 ```
 
-### Python SDK Quickstart
+---
+
+## Python SDK Quickstart
 
 VerifyCraft provides a typed verification engine that evaluates explicit regression hypotheses against approved checks:
 
@@ -141,13 +138,16 @@ engine = VerificationEngine()
 result = engine.verify(verification_input, policy=policy)
 
 print("Verdict:", result.verdict.value)
-print("Evidence exit code:", result.evidence[0].exit_code)
+if result.evidence:
+    print("Evidence exit code:", result.evidence[0].exit_code)
 print("JSON Output:\n", result.to_json(indent=2))
 ```
 
-### CLI Quickstart
+---
 
-VerifyCraft includes a thin CLI that shares the exact same verification engine and typed schemas:
+## Standalone CLI Usage
+
+The VerifyCraft CLI mirrors the Python SDK, sharing the exact same engine and typed schemas:
 
 ```bash
 # Display help and version
@@ -170,9 +170,9 @@ verifycraft verify \
   --format json
 ```
 
-#### CLI Exit Codes
+### CLI Exit Codes
 
-VerifyCraft uses deterministic exit codes to communicate verification verdicts in automated pipelines:
+VerifyCraft uses deterministic exit codes to communicate verification verdicts in CI/CD pipelines:
 
 | Exit Code | Verdict / Status | Description |
 | :--- | :--- | :--- |
@@ -182,57 +182,73 @@ VerifyCraft uses deterministic exit codes to communicate verification verdicts i
 | `3` | `inconclusive` | Test failed without matching the expected failure signature / pattern. |
 | `4` | `blocked` | Execution was blocked by policy, limits, or missing authorization. |
 
-> [!NOTE]
-> **Advisory Network Policy**: Setting `allow_network=False` in `trusted_local` mode indicates the intended execution constraint. In trusted local mode, it does not construct an OS kernel sandbox or firewall boundary. Full containerized isolation is planned for future stages.
+---
 
-### Benchmark Suite
+## Verification Security & Limitations
 
-VerifyCraft includes a reproducible benchmark comparing evidence-based verification against a prompt-only LLM reviewer baseline across 5 canonical scenarios:
+> [!IMPORTANT]
+> VerifyCraft enforces strict security boundaries designed to prevent unauthorized code execution and forged verification results:
+
+1. **Fail-Closed Verification Scope**:
+   Verification scope resolution enforces a hard limit of **500 relevant repository files**. If a repository or target scope exceeds 500 files, the engine raises a `FingerprintError` and refuses to produce a partial or misleading fingerprint.
+2. **Advisory Network Policy**:
+   In `trusted_local` mode, setting `allow_network=False` indicates the intended constraint. Because `trusted_local` runs on the local host without kernel namespace isolation, it does not construct an OS firewall boundary. Full containerized isolation is scheduled for Stage 4/5.
+3. **Untrusted Code Rejection**:
+   Running with `untrusted_code=True` in `trusted_local` mode is blocked by default (`Verdict.BLOCKED` / `PolicyViolationError`). Untrusted code must never execute on a bare host.
+4. **Independent Provenance Authentication for Cached Evidence**:
+   Caller-supplied execution evidence is **disabled as authoritative by default**. Metadata consistency (matching exit codes, outputs, or timestamps) does not equal provenance. To reuse cached evidence, callers must provide an independent `provenance_authenticator` callback.
+
+---
+
+## How to Run Tests
+
+VerifyCraft has an extensive test suite including unit, contract, integration, and security regression tests:
 
 ```bash
-# Run benchmark with summary output
-python -m benchmarks.evaluate
+# Run pytest with coverage report
+uv run pytest --cov=verifycraft
 
-# Emit benchmark results as JSON
-python -m benchmarks.evaluate --json
+# Or using standard pytest
+pytest --cov=verifycraft
 ```
 
 ---
 
-## Proposed Project Layout
+## How to Reproduce Benchmarks
 
-```text
-verifycraft/
-├── src/verifycraft/
-│   ├── contracts/               # Typed, versioned public schemas
-│   ├── core/                    # Execution limits, evidence, provenance, policies
-│   ├── capabilities/
-│   │   ├── verify/             # Initial verification capability
-│   │   ├── review/             # Candidate-finding generation
-│   │   └── test/               # Targeted test proposal and execution
-│   ├── providers/               # Minimal provider protocols
-│   └── cli/                     # Direct CLI, same SDK behavior
-├── integrations/
-│   ├── langgraph/               # Optional graph adapter
-│   └── github-action/           # Optional automation wrapper
-├── tests/
-│   ├── unit/
-│   ├── contract/
-│   └── integration/
-├── benchmarks/                  # Reproducible comparisons against baselines
-├── examples/                    # Standalone and embedded usage
-├── docs/                        # Architecture foundations, roadmap, and assets
-│   ├── FOUNDATIONS.md
-│   ├── ROADMAP.md
-│   └── assets/
-└── pyproject.toml
+VerifyCraft includes reproducible benchmark comparisons against prompt-only LLM reviewer baselines across 5 canonical scenarios:
+
+```bash
+# Run benchmark evaluation with human-readable summary
+uv run python -m benchmarks.evaluate
+
+# Emit benchmark results as machine-readable JSON
+uv run python -m benchmarks.evaluate --json
 ```
 
 ---
 
-## Current Status
+## How Public Releases are Created
 
-VerifyCraft is currently in **Stage 0 / Stage 1** of its [roadmap](docs/ROADMAP.md): establishing golden benchmark datasets, baseline evaluation protocols, and the initial Python/pytest verification vertical slice.
+Public releases are fully automated and secured via GitHub Actions:
+- **Trigger**: Pushing a version tag matching `v*` (e.g. `v0.1.0a1`).
+- **Ancestry Gate**: The tag commit must exist on the `origin/main` branch.
+- **Version Gate**: Standard library `tomllib` validates that the tag matches `pyproject.toml` and `verifycraft.__version__`.
+- **Verification Gates**: Runs the complete linter (`ruff`), type checker (`mypy`), test suite (`pytest`), and benchmark evaluation before building.
+- **Trusted Publishing**: Releases are published to PyPI via OpenID Connect (OIDC) through the `pypi` GitHub Environment. No static API tokens are used.
+
+For full release procedures and configuration instructions, see [RELEASING.md](docs/RELEASING.md).
+
+---
+
+## Documentation
+
+- 📘 **[Architecture & Foundations (`docs/FOUNDATIONS.md`)](docs/FOUNDATIONS.md)**: Architectural principles, contracts, and safety boundaries.
+- 🗺️ **[Roadmap & Delivery Sequence (`docs/ROADMAP.md`)](docs/ROADMAP.md)**: Outcome-based milestone sequence (Stages 0–5).
+- 🚀 **[Release Guide (`docs/RELEASING.md`)](docs/RELEASING.md)**: Versioning, PyPI Trusted Publishing, and release checklists.
+- 🤝 **[Contributing Guidelines (`CONTRIBUTING.md`)](CONTRIBUTING.md)**: Code conventions, branch patterns, and development setup.
+
+---
 
 ## License
 
