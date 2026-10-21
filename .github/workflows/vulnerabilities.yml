@@ -22,9 +22,7 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: Install dependencies and pip-audit
-        run: |
-          python -m pip install --upgrade pip
-          pip install pip-audit .
       - name: Run security audit
-        run: pip-audit
+        uses: pypa/gh-action-pip-audit@v1.1.0
+        with:
+          inputs: .
