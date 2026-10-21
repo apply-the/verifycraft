@@ -21,7 +21,7 @@ Each capability is designed to be useful **standalone** (via CLI and Python SDK)
 
 ## What VerifyCraft Does Today
 
-In version `0.1.0a1`, VerifyCraft delivers the core verification engine (Stage 1 / Stage 2 vertical slice):
+In version `0.1.0`, VerifyCraft delivers the core verification engine (Stage 1 / Stage 2 vertical slice):
 
 - **Deterministic Hypothesis Verification**: Evaluates structured regression claims against approved test targets (e.g. `pytest`).
 - **Fail-Closed Verification Scope**: Resolves code context and fingerprints up to 500 relevant repository files, failing closed if limits are exceeded.
@@ -231,7 +231,7 @@ uv run python -m benchmarks.evaluate --json
 ## How Public Releases are Created
 
 Public releases are fully automated and secured via GitHub Actions:
-- **Trigger**: Pushing a version tag matching `v*` (e.g. `v0.1.0a1`).
+- **Trigger**: Pushing a version tag matching `v*` (e.g. `v0.1.0`).
 - **Ancestry Gate**: The tag commit must exist on the `origin/main` branch.
 - **Version Gate**: Standard library `tomllib` validates that the tag matches `pyproject.toml` and `verifycraft.__version__`.
 - **Verification Gates**: Runs the complete linter (`ruff`), type checker (`mypy`), test suite (`pytest`), and benchmark evaluation before building.

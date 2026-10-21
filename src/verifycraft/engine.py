@@ -46,7 +46,7 @@ class VerificationEngine:
                     selects an appropriate runner based on the execution policy mode.
             provenance_authenticator: Optional independent authenticator verifying evidence
                     cryptographic provenance. Caller-provided cached evidence is rejected
-                    as authoritative in v0.1.0a1 unless independently authenticated.
+                    as authoritative in v0.1.0 unless independently authenticated.
         """
         self._runner = runner
         self._authenticator = provenance_authenticator

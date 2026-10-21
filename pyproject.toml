@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "verifycraft"
-version = "0.1.0a1"
+version = "0.1.0"
 description = "Composable review, testing, and verification capabilities for AI agents."
 readme = "README.md"
 requires-python = ">=3.11"

@@ -12,7 +12,7 @@ VerifyCraft follows [Semantic Versioning 2.0.0](https://semver.org/) and [PEP 44
   - Example pre-release: `0.1.0a1` (first alpha of 0.1.0)
   - Example release candidate: `0.1.0rc1`
   - Example stable release: `0.1.0`
-- **Git Tags**: Release tags must be prefixed with `v` (e.g., `v0.1.0a1`).
+- **Git Tags**: Release tags must be prefixed with `v` (e.g., `v0.1.0`).
 
 ### Single Source of Truth
 
@@ -21,11 +21,11 @@ The package version is declared in two synchronized locations:
    ```toml
    [project]
    name = "verifycraft"
-   version = "0.1.0a1"
+   version = "0.1.0"
    ```
 2. `src/verifycraft/__init__.py`:
    ```python
-   __version__ = "0.1.0a1"
+   __version__ = "0.1.0"
    ```
 
 The automated release workflow validates that:
@@ -89,7 +89,7 @@ uv run twine check --strict dist/*
 ### Step 2: Version Bump
 
 If version updates are needed:
-1. Create a branch: `chore/bump-version-to-0.1.0a1`
+1. Create a branch: `chore/bump-version-to-0.1.0`
 2. Update `pyproject.toml` and `src/verifycraft/__init__.py`.
 3. Open a PR into `main`, obtain review, and merge after CI succeeds.
 
@@ -103,10 +103,10 @@ git checkout main
 git pull --ff-only
 
 # Create an annotated tag matching the version
-git tag -a v0.1.0a1 -m "VerifyCraft 0.1.0a1"
+git tag -a v0.1.0 -m "VerifyCraft 0.1.0"
 
 # Push the tag to GitHub
-git push origin v0.1.0a1
+git push origin v0.1.0
 ```
 
 > [!IMPORTANT]
@@ -127,11 +127,11 @@ git push origin v0.1.0a1
 After publication completes:
 ```bash
 # Verify installation from PyPI
-pip install verifycraft==0.1.0a1
+pip install verifycraft==0.1.0
 verifycraft --version
 
 # Create GitHub Release page (distinct from Git tag)
-gh release create v0.1.0a1 --prerelease --generate-notes
+gh release create v0.1.0 --generate-notes
 ```
 
 ---
@@ -145,7 +145,7 @@ To test the packaging and publication workflow against TestPyPI before a product
    ```bash
    uv venv test-env --python 3.11
    source test-env/bin/activate
-   pip install --index-url https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple/ verifycraft==0.1.0a1
+   pip install --index-url https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple/ verifycraft==0.1.0
    verifycraft --version
    ```
 
@@ -156,7 +156,7 @@ To test the packaging and publication workflow against TestPyPI before a product
 ### PyPI Immutability Rule
 
 > [!CAUTION]
-> **PyPI releases are immutable.** Once a file (e.g., `verifycraft-0.1.0a1-py3-none-any.whl` or `verifycraft-0.1.0a1.tar.gz`) is uploaded to PyPI, it can **never** be re-uploaded, overwritten, or replaced—even if the release is deleted from PyPI.
+> **PyPI releases are immutable.** Once a file (e.g., `verifycraft-0.1.0-py3-none-any.whl` or `verifycraft-0.1.0.tar.gz`) is uploaded to PyPI, it can **never** be re-uploaded, overwritten, or replaced—even if the release is deleted from PyPI.
 
 ### Failure Scenarios & Recovery
 
@@ -164,13 +164,13 @@ To test the packaging and publication workflow against TestPyPI before a product
    - No artifacts were uploaded to PyPI.
    - Delete the remote tag:
      ```bash
-     git tag -d v0.1.0a1
-     git push origin :refs/tags/v0.1.0a1
+     git tag -d v0.1.0
+     git push origin :refs/tags/v0.1.0
      ```
    - Fix the issue on a branch, merge to `main`, and re-tag.
 
 2. **Failure during `publish` (After Partial Upload)**:
    - If the wheel or source archive was accepted by PyPI before failure, that version number is permanently locked.
    - **Do NOT attempt to re-push the same tag.**
-   - Increment the patch or pre-release version (e.g., from `0.1.0a1` to `0.1.0a2`).
+   - Increment the patch or pre-release version (e.g., from `0.1.0` to `0.1.1`).
    - Merge the version increment to `main` and tag the new version.

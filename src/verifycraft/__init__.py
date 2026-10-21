@@ -23,7 +23,7 @@ from verifycraft.core.runner import (
 )
 from verifycraft.engine import VerificationEngine
 
-__version__ = "0.1.0a1"
+__version__ = "0.1.0"
 
 __all__ = [
     "CheckRunner",
