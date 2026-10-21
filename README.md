@@ -66,32 +66,135 @@ Comprehensive design specifications and project planning are available in the [`
 
 ---
 
-## Conceptual Usage
+---
 
-VerifyCraft is designed to work both as a command-line tool and as an embeddable Python library.
+## Quickstart
 
-### Python SDK
+### Installation
 
-```python
-from verifycraft import VerifyCraft
-
-engine = VerifyCraft(model=my_model_adapter)
-result = engine.review(
-    repository=".",
-    base_ref="origin/main",
-    verify=True,
-    max_cost_usd=0.50,
-)
-
-for finding in result.findings:
-    print(finding.verdict, finding.evidence)
-```
-
-### CLI
+VerifyCraft requires Python 3.11+.
 
 ```bash
-# Review a diff, verify testable hypotheses, and emit structured JSON
-verifycraft review . --base origin/main --verify --format json
+# Clone the repository
+git clone https://github.com/apply-the/verifycraft.git
+cd verifycraft
+
+# Install in development mode with uv or pip
+uv sync --extra dev
+# or
+pip install -e ".[dev]"
+```
+
+### Python SDK Quickstart
+
+VerifyCraft provides a typed verification engine that evaluates explicit regression hypotheses against approved checks:
+
+```python
+from verifycraft import (
+    CheckSpec,
+    CheckType,
+    ExecutionMode,
+    ExecutionPolicy,
+    ExpectedObservation,
+    Hypothesis,
+    VerificationEngine,
+    VerificationInput,
+)
+
+# 1. Define an explicit, testable hypothesis
+hypothesis = Hypothesis(
+    id="hyp-auth-01",
+    claim="Passing None triggers TypeError subscript error",
+    failure_mechanism="TypeError: 'NoneType' object is not subscriptable",
+    expected_observation=ExpectedObservation(
+        expected_outcome="fail",
+        expected_exit_codes=[1],
+        match_patterns=["TypeError: 'NoneType' object is not subscriptable"],
+    ),
+)
+
+# 2. Define an approved check specification
+check_spec = CheckSpec(
+    check_id="chk-auth-pytest",
+    check_type=CheckType.PYTEST,
+    target_path="tests/test_auth.py",
+    args=["-q"],
+)
+
+# 3. Assemble verification input
+verification_input = VerificationInput(
+    repo_path=".",
+    revision="HEAD",
+    hypothesis=hypothesis,
+    check_spec=check_spec,
+)
+
+# 4. Configure bounded execution policy (trusted local execution opt-in)
+policy = ExecutionPolicy(
+    mode=ExecutionMode.TRUSTED_LOCAL,
+    timeout_seconds=15.0,
+    untrusted_code=False,
+)
+
+# 5. Run verification
+engine = VerificationEngine()
+result = engine.verify(verification_input, policy=policy)
+
+print("Verdict:", result.verdict.value)
+print("Evidence exit code:", result.evidence[0].exit_code)
+print("JSON Output:\n", result.to_json(indent=2))
+```
+
+### CLI Quickstart
+
+VerifyCraft includes a thin CLI that shares the exact same verification engine and typed schemas:
+
+```bash
+# Display help and version
+verifycraft --version
+verifycraft --help
+
+# Verify a test target with a hypothesis in dry-run mode (safe default)
+verifycraft verify \
+  --repo . \
+  --target tests/test_auth.py \
+  --claim "Anonymous user causes TypeError" \
+  --mode dry_run
+
+# Execute under trusted local policy and output machine-readable JSON
+verifycraft verify \
+  --repo . \
+  --target tests/test_auth.py \
+  --claim "Anonymous user causes TypeError" \
+  --mode trusted_local \
+  --format json
+```
+
+#### CLI Exit Codes
+
+VerifyCraft uses deterministic exit codes to communicate verification verdicts in automated pipelines:
+
+| Exit Code | Verdict / Status | Description |
+| :--- | :--- | :--- |
+| `0` | `supported` | Hypothesis is supported by observable evidence and diagnostic signatures. |
+| `1` | Error | CLI usage error, invalid input, or unexpected operational failure. |
+| `2` | `refuted` | Hypothesis is refuted (e.g., test passed when a failure was claimed). |
+| `3` | `inconclusive` | Test failed without matching the expected failure signature / pattern. |
+| `4` | `blocked` | Execution was blocked by policy, limits, or missing authorization. |
+
+> [!NOTE]
+> **Advisory Network Policy**: Setting `allow_network=False` in `trusted_local` mode indicates the intended execution constraint. In trusted local mode, it does not construct an OS kernel sandbox or firewall boundary. Full containerized isolation is planned for future stages.
+
+### Benchmark Suite
+
+VerifyCraft includes a reproducible benchmark comparing evidence-based verification against a prompt-only LLM reviewer baseline across 5 canonical scenarios:
+
+```bash
+# Run benchmark with summary output
+python -m benchmarks.evaluate
+
+# Emit benchmark results as JSON
+python -m benchmarks.evaluate --json
 ```
 
 ---

@@ -1,0 +1,99 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  test-gate:
+    name: test-gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+      - name: Run test suite
+        run: pytest
+      - name: Run benchmark contract evaluation
+        run: python -m benchmarks.evaluate
+
+  build:
+    name: build
+    needs: test-gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install build tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install build twine
+      - name: Verify tag matches package version
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          PYTHONPATH=src python -c "
+          import tomllib, sys
+          import verifycraft as v
+
+          with open('pyproject.toml', 'rb') as f:
+              pyproject_data = tomllib.load(f)
+          pyproject_version = pyproject_data['project']['version']
+          tag_version = '${TAG_VERSION}'
+
+          print(f'Tag version: {tag_version}')
+          print(f'pyproject.toml version: {pyproject_version}')
+          print(f'verifycraft.__version__: {v.__version__}')
+
+          if tag_version != pyproject_version:
+              print(f'::error::Git tag (v{tag_version}) does not match pyproject.toml version ({pyproject_version})')
+              sys.exit(1)
+
+          if v.__version__ != pyproject_version:
+              print(f'::error::Code version ({v.__version__}) does not match pyproject.toml version ({pyproject_version})')
+              sys.exit(1)
+          "
+      - name: Build distributions
+        run: python -m build
+      - name: Validate distributions
+        run: python -m twine check --strict dist/*
+      - name: Upload distribution artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: distributions
+          path: dist/
+          retention-days: 7
+
+  publish:
+    name: publish
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/verifycraft
+    permissions:
+      id-token: write # Mandatory for PyPI Trusted Publishing (OIDC)
+    steps:
+      - name: Download distribution artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: distributions
+          path: dist/
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/
