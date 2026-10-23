@@ -22,6 +22,7 @@ cd "$REPO_ROOT"
 
 DRY_RUN=false
 AUTO_CONFIRM=false
+FORCE_TAG=false
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -33,6 +34,10 @@ while [[ $# -gt 0 ]]; do
             DRY_RUN=true
             shift
             ;;
+        -f|--force)
+            FORCE_TAG=true
+            shift
+            ;;
         -h|--help)
             echo "Usage: $0 [OPTIONS]"
             echo ""
@@ -41,6 +46,7 @@ while [[ $# -gt 0 ]]; do
             echo "Options:"
             echo "  -y, --yes      Execute without interactive confirmation"
             echo "  -d, --dry-run  Validate release preconditions without creating/pushing tag"
+            echo "  -f, --force    Recreate and re-push tag even if it already exists"
             echo "  -h, --help     Show this help message"
             exit 0
             ;;
@@ -141,14 +147,24 @@ fi
 # 7. Check if tag already exists locally
 if git rev-parse "$TAG" >/dev/null 2>&1; then
     EXISTING_COMMIT=$(git rev-parse "$TAG^{commit}")
-    echo "Error: Tag '$TAG' already exists locally pointing to commit $EXISTING_COMMIT." >&2
-    exit 1
+    if [[ "$FORCE_TAG" == true ]]; then
+        echo "  Notice: Local tag '$TAG' exists ($EXISTING_COMMIT); will be overwritten (--force)."
+    else
+        echo "Error: Tag '$TAG' already exists locally pointing to commit $EXISTING_COMMIT." >&2
+        echo "       Use --force if you need to recreate and re-push the tag." >&2
+        exit 1
+    fi
 fi
 
 # 8. Check if tag already exists remotely
 if git ls-remote --tags origin "refs/tags/$TAG" | grep -q "$TAG"; then
-    echo "Error: Tag '$TAG' already exists on remote 'origin'." >&2
-    exit 1
+    if [[ "$FORCE_TAG" == true ]]; then
+        echo "  Notice: Remote tag '$TAG' exists on origin; will be overwritten (--force)."
+    else
+        echo "Error: Tag '$TAG' already exists on remote 'origin'." >&2
+        echo "       Use --force if you need to recreate and re-push the tag." >&2
+        exit 1
+    fi
 fi
 
 echo "  Pre-release validations passed successfully."
@@ -156,8 +172,13 @@ echo "  Pre-release validations passed successfully."
 if [[ "$DRY_RUN" == true ]]; then
     echo ""
     echo "[DRY RUN] Would execute:"
-    echo "  git tag -a \"$TAG\" -m \"$MESSAGE\""
-    echo "  git push origin \"$TAG\""
+    if [[ "$FORCE_TAG" == true ]]; then
+        echo "  git tag -f -a \"$TAG\" -m \"$MESSAGE\""
+        echo "  git push origin \"refs/tags/$TAG\" --force"
+    else
+        echo "  git tag -a \"$TAG\" -m \"$MESSAGE\""
+        echo "  git push origin \"$TAG\""
+    fi
     echo ""
     echo "[DRY RUN] No changes were made."
     exit 0
@@ -178,11 +199,17 @@ if [[ "$AUTO_CONFIRM" != true ]]; then
 fi
 
 # 10. Create and push tag
-echo "Creating annotated tag '$TAG'..."
-git tag -a "$TAG" -m "$MESSAGE"
-
-echo "Pushing tag '$TAG' to origin..."
-git push origin "$TAG"
+if [[ "$FORCE_TAG" == true ]]; then
+    echo "Recreating annotated tag '$TAG'..."
+    git tag -f -a "$TAG" -m "$MESSAGE"
+    echo "Force-pushing tag '$TAG' to origin..."
+    git push origin "refs/tags/$TAG" --force
+else
+    echo "Creating annotated tag '$TAG'..."
+    git tag -a "$TAG" -m "$MESSAGE"
+    echo "Pushing tag '$TAG' to origin..."
+    git push origin "$TAG"
+fi
 
 echo ""
 echo "=== Release Tag Successfully Pushed ==="

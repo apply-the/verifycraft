@@ -6,3 +6,7 @@
 
 # Or without manual confirmation (e.g., in CI environments or scripts)
 ./scripts/release_tag.sh --yes
+
+# Overwrite and re-push existing tag (e.g., after fixing workflow configuration on main)
+./scripts/release_tag.sh --force --yes
+
