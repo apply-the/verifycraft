@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from enum import StrEnum
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -124,10 +124,21 @@ class CheckSpec(BaseModel):
         if not clean:
             raise ValueError("target_path must not be empty")
         clean_file = clean.split("::")[0].strip()
-        p = Path(clean_file)
-        if p.is_absolute():
+        is_abs = (
+            Path(clean_file).is_absolute()
+            or PureWindowsPath(clean_file).is_absolute()
+            or PurePosixPath(clean_file).is_absolute()
+            or clean_file.startswith(("/", "\\"))
+            or bool(PureWindowsPath(clean_file).drive)
+        )
+        if is_abs:
             raise ValueError(f"target_path must be relative, not absolute: {path_str}")
-        if ".." in p.parts:
+        has_traversal = (
+            ".." in Path(clean_file).parts
+            or ".." in PureWindowsPath(clean_file).parts
+            or ".." in PurePosixPath(clean_file).parts
+        )
+        if has_traversal:
             raise ValueError(f"target_path must not contain '..' path traversal: {path_str}")
         return clean
 

@@ -172,12 +172,18 @@ def test_terminate_process_group_edge_cases() -> None:
     proc_done.kill.assert_not_called()
 
     # 2. Process running, os.getpgid raises ProcessLookupError -> falls back to proc.kill()
+    import os
     from unittest.mock import patch
 
     proc_running = MagicMock()
     proc_running.poll.return_value = None
     proc_running.pid = 99999
-    with patch("os.getpgid", side_effect=ProcessLookupError):
+    if hasattr(os, "getpgid"):
+        with patch("os.getpgid", side_effect=ProcessLookupError):
+            _terminate_process_group(proc_running)
+            proc_running.kill.assert_called_once()
+    else:
+        # On Windows, os.getpgid does not exist; falls back directly to proc.kill()
         _terminate_process_group(proc_running)
         proc_running.kill.assert_called_once()
 
@@ -185,7 +191,10 @@ def test_terminate_process_group_edge_cases() -> None:
     proc_fail = MagicMock()
     proc_fail.poll.return_value = None
     proc_fail.kill.side_effect = RuntimeError("Fatal kill failure")
-    with patch("os.getpgid", side_effect=ProcessLookupError):
+    if hasattr(os, "getpgid"):
+        with patch("os.getpgid", side_effect=ProcessLookupError):
+            _terminate_process_group(proc_fail)
+    else:
         _terminate_process_group(proc_fail)
 
 

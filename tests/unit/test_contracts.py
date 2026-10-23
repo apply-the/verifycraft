@@ -64,12 +64,18 @@ def test_check_spec_target_path_validation() -> None:
             target_path="   ",
         )
 
-    # Absolute target path
+    # Absolute target path (POSIX and Windows)
     with pytest.raises(ValidationError, match="target_path must be relative, not absolute"):
         CheckSpec(
             check_id="chk-abs",
             check_type=CheckType.PYTEST,
             target_path="/etc/passwd",
+        )
+    with pytest.raises(ValidationError, match="target_path must be relative, not absolute"):
+        CheckSpec(
+            check_id="chk-abs-win",
+            check_type=CheckType.PYTEST,
+            target_path="C:/test.py",
         )
 
     # Path traversal target path

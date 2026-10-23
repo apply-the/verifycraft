@@ -107,19 +107,21 @@ def resolve_verification_scope(
     # 1. Target check path
     clean_target = check_spec.target_path.split("::")[0].strip()
     if clean_target:
-        scope_paths.add(clean_target)
+        scope_paths.add(Path(clean_target).as_posix())
 
     # 2. Declared target files
     for tf in target_files:
         clean_tf = tf.strip()
         if clean_tf:
-            scope_paths.add(clean_tf)
+            scope_paths.add(Path(clean_tf).as_posix())
 
     # 3. Affected locations
-    scope_paths.update(_extract_affected_location_paths(affected_locations))
+    scope_paths.update(
+        Path(p).as_posix() for p in _extract_affected_location_paths(affected_locations)
+    )
 
     # 4. Diff files
-    scope_paths.update(_parse_diff_file_paths(diff))
+    scope_paths.update(Path(p).as_posix() for p in _parse_diff_file_paths(diff))
 
     # 5. Discover relevant repo source and test files (handling omitted target_files)
     if repo_path.is_dir():
@@ -158,7 +160,7 @@ def resolve_verification_scope(
 
                 if item.is_file() and item.suffix in SCOPED_FILE_EXTENSIONS:
                     try:
-                        rel = str(item.relative_to(repo_path))
+                        rel = item.relative_to(repo_path).as_posix()
                         scope_paths.add(rel)
                         if len(scope_paths) > max_scope_files:
                             raise FingerprintError(
@@ -203,7 +205,8 @@ def compute_fingerprint(
         affected_locations=affected_locs,
     )
 
-    clean_target = check_spec.target_path.split("::")[0].strip()
+    clean_target = Path(check_spec.target_path.split("::")[0].strip()).as_posix()
+    target_files_normalized = {Path(tf.strip()).as_posix() for tf in target_files if tf.strip()}
     file_hashes: dict[str, str] = {}
 
     for rel_path in scope:
@@ -224,7 +227,7 @@ def compute_fingerprint(
                     raise FingerprintError(
                         f"Check target file does not exist on disk: '{rel_path}' in '{repo_path}'."
                     )
-                if rel_path in target_files:
+                if rel_path in target_files_normalized:
                     raise FingerprintError(
                         f"Target file does not exist on disk: '{rel_path}' in '{repo_path}'."
                     )
@@ -245,7 +248,7 @@ def compute_fingerprint(
     payload = {
         "revision": revision.strip(),
         "diff": (diff.strip() if diff is not None else None),
-        "target_files": sorted(target_files),
+        "target_files": sorted(target_files_normalized),
         "verification_scope": scope,
         "file_hashes": file_hashes,
         "check": {
