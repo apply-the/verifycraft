@@ -229,3 +229,32 @@ def test_expected_error_outcome() -> None:
 
     evi_clean = _make_evidence(exit_code=0, stdout="clean")
     assert evaluate_hypothesis(hyp, evi_clean).verdict == Verdict.REFUTED
+
+
+def test_evaluator_invalid_regex_and_contradict_non_match() -> None:
+    from verifycraft.core.evaluator import _pattern_matches
+
+    # 1. Invalid regex fallback to literal substring
+    assert _pattern_matches("[invalid(regex", "Error: [invalid(regex happened") is True
+    assert _pattern_matches("[invalid(regex", "Different text") is False
+
+    # 2. Contradict pattern does not match, allowing evaluation to proceed
+    hyp = Hypothesis(
+        id="hyp-cont",
+        claim="Regression occurs",
+        expected_observation=ExpectedObservation(
+            expected_outcome="fail",
+            expected_exit_codes=[1],
+            match_patterns=["KnownFailure"],
+            contradict_patterns=["UnexpectedSuccess", "ShouldNotHappen"],
+        ),
+    )
+    evi = _make_evidence(exit_code=1, stdout="KnownFailure observed")
+    finding = evaluate_hypothesis(hyp, evi)
+    assert finding.verdict == Verdict.SUPPORTED
+
+    # 3. Unhandled outcome fallback at line 168
+    object.__setattr__(hyp.expected_observation, "expected_outcome", "unknown_outcome")
+    finding_unhandled = evaluate_hypothesis(hyp, evi)
+    assert finding_unhandled.verdict == Verdict.INCONCLUSIVE
+    assert "decisively categorized" in finding_unhandled.reason

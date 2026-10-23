@@ -145,3 +145,47 @@ def test_cli_bad_input_file(capsys: pytest.CaptureFixture[str]) -> None:
     assert exc_info.value.code == 1
     captured = capsys.readouterr()
     assert "Error reading input JSON" in captured.err
+
+
+def test_cli_format_summary_edge_cases() -> None:
+    from verifycraft.cli import _format_summary
+    from verifycraft.contracts import Evidence, ResourceUsage, Verdict, VerificationResult
+
+    # VerificationResult with inconclusive_reason, no findings, truncated evidence, empty stdout
+    res = VerificationResult(
+        verdict=Verdict.INCONCLUSIVE,
+        findings=[],
+        evidence=[
+            Evidence(
+                evidence_id="evi-trunc",
+                check_id="chk-1",
+                evidence_type="pytest_execution",
+                exit_code=1,
+                stdout="",
+                stderr="",
+                output_truncated=True,
+                fingerprint="sha256:abc",
+                resource_usage=ResourceUsage(wall_time_seconds=1.5),
+            )
+        ],
+        inconclusive_reason="Resource exhausted or timeout encountered.",
+        fingerprint="sha256:abc",
+        resource_usage=ResourceUsage(wall_time_seconds=1.5),
+    )
+    summary = _format_summary(res)
+    assert "Inconclusive:  Resource exhausted" in summary
+    assert "[Output truncated due to size limits]" in summary
+    assert "Findings:" not in summary
+
+
+def test_cli_main_none_argv(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import sys
+
+    monkeypatch.setattr(sys, "argv", ["verifycraft"])
+    with pytest.raises(SystemExit) as exc_info:
+        main(None)
+    assert exc_info.value.code == 0
+    captured = capsys.readouterr()
+    assert "VerifyCraft" in captured.out

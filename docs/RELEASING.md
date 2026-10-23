@@ -95,14 +95,31 @@ If version updates are needed:
 
 ### Step 3: Tag Creation & Push
 
-Releases are triggered **strictly by pushing a signed or annotated Git tag from the current HEAD of `main`**:
+Releases are triggered **strictly by pushing an annotated Git tag from the current HEAD of `main`**.
+
+#### Option A: Automated Release Script (Recommended)
+
+VerifyCraft provides an automated release tagging script [`scripts/release_tag.sh`](file:///Users/rt/workspace/apply-the/verifycraft/scripts/release_tag.sh) that dynamically reads the project version from `pyproject.toml`, validates version synchronization with `__init__.py`, checks git branch and working tree hygiene, verifies alignment with `origin/main`, and creates/pushes the tag:
+
+```bash
+# Validate release preconditions in dry-run mode
+./scripts/release_tag.sh --dry-run
+
+# Create and push the annotated release tag (prompts for confirmation)
+./scripts/release_tag.sh
+
+# Or proceed without prompt
+./scripts/release_tag.sh --yes
+```
+
+#### Option B: Manual Tag & Push
 
 ```bash
 # Ensure you are on the latest verified commit on main
 git checkout main
 git pull --ff-only
 
-# Create an annotated tag matching the version
+# Create an annotated tag matching the version in pyproject.toml
 git tag -a v0.1.0 -m "VerifyCraft 0.1.0"
 
 # Push the tag to GitHub

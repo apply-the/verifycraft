@@ -241,3 +241,109 @@ def test_engine_rejects_fake_cached_evidence_under_trusted_local_policy() -> Non
     result = engine.verify(v_input, policy=policy, cached_evidence=[fake_cached_evi])
     assert result.verdict == Verdict.BLOCKED
     assert "cached fake evidence cannot be accepted" in (result.blocked_reason or "")
+
+
+def test_engine_resolve_runner_edge_cases() -> None:
+    import pytest
+
+    from verifycraft.core.runner import TrustedPytestRunner
+
+    # 1. Non-fake runner when policy mode is fake raises ValueError (line 62)
+    engine_real = VerificationEngine(runner=TrustedPytestRunner())
+    policy_fake = ExecutionPolicy(mode=ExecutionMode.FAKE)
+    with pytest.raises(ValueError, match="non-fake runner cannot be used"):
+        engine_real._resolve_runner(policy_fake)
+
+    # 2. Default runner resolution for fake mode returns FakeRunner (line 69)
+    engine_default = VerificationEngine(runner=None)
+    resolved_runner = engine_default._resolve_runner(policy_fake)
+    assert isinstance(resolved_runner, FakeRunner)
+
+
+def test_engine_cached_evidence_type_mismatches() -> None:
+    engine = VerificationEngine()
+
+    # 1. pytest check specification with non-pytest evidence type (lines 234-239)
+    v_input_pytest = _make_input("Test pytest spec mismatch")
+    object.__setattr__(v_input_pytest.check_spec, "check_type", CheckType.PYTEST)
+    object.__setattr__(v_input_pytest.check_spec, "target_path", "tests/unit/test_smoke.py")
+    fp_pytest = compute_fingerprint(
+        repo_path=v_input_pytest.repo_path,
+        revision=v_input_pytest.revision,
+        diff=v_input_pytest.diff,
+        target_files=v_input_pytest.target_files,
+        check_spec=v_input_pytest.check_spec,
+    )
+    evi_static = Evidence(
+        evidence_id="evi-static",
+        check_id=v_input_pytest.check_spec.check_id,
+        evidence_type="static_analysis",
+        exit_code=0,
+        stdout="",
+        fingerprint=fp_pytest,
+    )
+    policy_trusted = ExecutionPolicy(
+        mode=ExecutionMode.TRUSTED_LOCAL,
+        untrusted_code=False,
+        allowed_check_types=[CheckType.PYTEST],
+    )
+    res1 = engine.verify(v_input_pytest, policy=policy_trusted, cached_evidence=[evi_static])
+    assert res1.verdict == Verdict.BLOCKED
+    assert "incompatible with pytest check specification" in (res1.blocked_reason or "")
+
+    # 2. fake mode with non-fake evidence type (lines 258-263)
+    v_input_fake = _make_input("Test fake mode mismatch")
+    fp_fake = compute_fingerprint(
+        repo_path=v_input_fake.repo_path,
+        revision=v_input_fake.revision,
+        diff=v_input_fake.diff,
+        target_files=v_input_fake.target_files,
+        check_spec=v_input_fake.check_spec,
+    )
+    evi_pytest = Evidence(
+        evidence_id="evi-pytest",
+        check_id=v_input_fake.check_spec.check_id,
+        evidence_type="pytest_execution",
+        exit_code=0,
+        stdout="",
+        fingerprint=fp_fake,
+    )
+    policy_fake = ExecutionPolicy(mode=ExecutionMode.FAKE)
+    res2 = engine.verify(v_input_fake, policy=policy_fake, cached_evidence=[evi_pytest])
+    assert res2.verdict == Verdict.BLOCKED
+    assert "incompatible with fake policy mode" in (res2.blocked_reason or "")
+
+
+def test_engine_rejects_fake_evidence_produced_under_trusted_local() -> None:
+    from unittest.mock import MagicMock
+
+    v_input = _make_input("Test runner safety violation")
+    object.__setattr__(v_input.check_spec, "check_type", CheckType.PYTEST)
+    object.__setattr__(v_input.check_spec, "target_path", "tests/unit/test_smoke.py")
+    fp = compute_fingerprint(
+        repo_path=v_input.repo_path,
+        revision=v_input.revision,
+        diff=v_input.diff,
+        target_files=v_input.target_files,
+        check_spec=v_input.check_spec,
+    )
+
+    mock_runner = MagicMock()
+    mock_runner.run.return_value = Evidence(
+        evidence_id="evi-rogue-fake",
+        check_id=v_input.check_spec.check_id,
+        evidence_type="fake_execution",
+        exit_code=0,
+        stdout="fake pass",
+        fingerprint=fp,
+    )
+
+    engine = VerificationEngine(runner=mock_runner)
+    policy = ExecutionPolicy(
+        mode=ExecutionMode.TRUSTED_LOCAL,
+        untrusted_code=False,
+        allowed_check_types=[CheckType.PYTEST],
+    )
+    result = engine.verify(v_input, policy=policy)
+    assert result.verdict == Verdict.BLOCKED
+    assert "Safety violation: fake evidence cannot be accepted" in (result.blocked_reason or "")

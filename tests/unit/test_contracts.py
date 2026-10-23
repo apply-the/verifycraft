@@ -55,6 +55,32 @@ def test_check_spec_argument_security() -> None:
         )
 
 
+def test_check_spec_target_path_validation() -> None:
+    # Empty target path
+    with pytest.raises(ValidationError, match="target_path must not be empty"):
+        CheckSpec(
+            check_id="chk-empty",
+            check_type=CheckType.PYTEST,
+            target_path="   ",
+        )
+
+    # Absolute target path
+    with pytest.raises(ValidationError, match="target_path must be relative, not absolute"):
+        CheckSpec(
+            check_id="chk-abs",
+            check_type=CheckType.PYTEST,
+            target_path="/etc/passwd",
+        )
+
+    # Path traversal target path
+    with pytest.raises(ValidationError, match="must not contain '\\.\\.' path traversal"):
+        CheckSpec(
+            check_id="chk-trav",
+            check_type=CheckType.PYTEST,
+            target_path="../tests/test_foo.py",
+        )
+
+
 def test_execution_policy_defaults_and_validation() -> None:
     policy = ExecutionPolicy()
     assert policy.mode == ExecutionMode.DRY_RUN

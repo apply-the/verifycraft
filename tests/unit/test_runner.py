@@ -128,3 +128,87 @@ def test_trusted_pytest_runner_os_error_handling(monkeypatch: pytest.MonkeyPatch
     evidence = runner.run(spec, repo_path=".", policy=policy, fingerprint="sha256:err")
     assert evidence.exit_code == 1
     assert "OS error" in evidence.stderr
+
+
+def test_trusted_pytest_runner_popen_exceptions(monkeypatch: pytest.MonkeyPatch) -> None:
+    import subprocess
+
+    runner = TrustedPytestRunner()
+    spec = CheckSpec(
+        check_id="chk-err",
+        check_type=CheckType.PYTEST,
+        target_path="dummy.py",
+    )
+    policy = ExecutionPolicy(mode=ExecutionMode.TRUSTED_LOCAL)
+
+    # 1. FileNotFoundError -> exit code 127
+    def mock_fnf(*args: Any, **kwargs: Any) -> Any:
+        raise FileNotFoundError("pytest binary not found")
+
+    monkeypatch.setattr(subprocess, "Popen", mock_fnf)
+    evi_fnf = runner.run(spec, repo_path=".", policy=policy, fingerprint="sha256:fnf")
+    assert evi_fnf.exit_code == 127
+    assert "command or binary not found" in evi_fnf.stderr
+
+    # 2. PermissionError -> exit code 126
+    def mock_perm(*args: Any, **kwargs: Any) -> Any:
+        raise PermissionError("Access denied")
+
+    monkeypatch.setattr(subprocess, "Popen", mock_perm)
+    evi_perm = runner.run(spec, repo_path=".", policy=policy, fingerprint="sha256:perm")
+    assert evi_perm.exit_code == 126
+    assert "permission denied" in evi_perm.stderr
+
+
+def test_terminate_process_group_edge_cases() -> None:
+    from unittest.mock import MagicMock
+
+    from verifycraft.core.runner import _terminate_process_group
+
+    # 1. Process already exited (poll returns returncode)
+    proc_done = MagicMock()
+    proc_done.poll.return_value = 0
+    _terminate_process_group(proc_done)
+    proc_done.kill.assert_not_called()
+
+    # 2. Process running, os.getpgid raises ProcessLookupError -> falls back to proc.kill()
+    from unittest.mock import patch
+
+    proc_running = MagicMock()
+    proc_running.poll.return_value = None
+    proc_running.pid = 99999
+    with patch("os.getpgid", side_effect=ProcessLookupError):
+        _terminate_process_group(proc_running)
+        proc_running.kill.assert_called_once()
+
+    # 3. Exception in proc.kill() caught gracefully
+    proc_fail = MagicMock()
+    proc_fail.poll.return_value = None
+    proc_fail.kill.side_effect = RuntimeError("Fatal kill failure")
+    with patch("os.getpgid", side_effect=ProcessLookupError):
+        _terminate_process_group(proc_fail)
+
+
+def test_trusted_pytest_runner_stream_reading_edge_cases(monkeypatch: pytest.MonkeyPatch) -> None:
+    import subprocess
+    from unittest.mock import MagicMock
+
+    runner = TrustedPytestRunner()
+    spec = CheckSpec(
+        check_id="chk-stream",
+        check_type=CheckType.PYTEST,
+        target_path="dummy.py",
+    )
+    policy = ExecutionPolicy(mode=ExecutionMode.TRUSTED_LOCAL)
+
+    mock_proc = MagicMock()
+    mock_proc.stdout = None
+    mock_proc.stderr = MagicMock()
+    mock_proc.stderr.read.side_effect = OSError("Simulated read failure")
+    mock_proc.returncode = 0
+    mock_proc.wait.return_value = 0
+    mock_proc.poll.return_value = 0
+
+    monkeypatch.setattr(subprocess, "Popen", lambda *args, **kwargs: mock_proc)
+    evidence = runner.run(spec, repo_path=".", policy=policy, fingerprint="sha256:stream")
+    assert evidence.exit_code == 0
