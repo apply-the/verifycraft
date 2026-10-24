@@ -116,6 +116,99 @@ class FakeRunner(CheckRunner):
         )
 
 
+def _handle_spawn_error(
+    exc: OSError,
+    spec: CheckSpec,
+    fingerprint: str,
+    start_time: float,
+) -> Evidence:
+    """Handle process spawn errors and return corresponding Evidence."""
+    wall_time = time.perf_counter() - start_time
+    if isinstance(exc, FileNotFoundError):
+        exit_code = 127
+        msg = f"Execution failed: command or binary not found: {exc}"
+    elif isinstance(exc, PermissionError):
+        exit_code = 126
+        msg = f"Execution failed: permission denied: {exc}"
+    else:
+        exit_code = 1
+        msg = f"Execution failed: OS error: {exc}"
+
+    return Evidence(
+        evidence_id=f"evi-{uuid4().hex[:8]}",
+        check_id=spec.check_id,
+        evidence_type="pytest_execution",
+        exit_code=exit_code,
+        stdout="",
+        stderr=msg,
+        output_truncated=False,
+        fingerprint=fingerprint,
+        resource_usage=ResourceUsage(wall_time_seconds=round(wall_time, 4)),
+    )
+
+
+class _StreamCollector:
+    """Thread-safe collector for stdout and stderr streams with byte caps."""
+
+    def __init__(self, max_output_bytes: int) -> None:
+        self.max_output_bytes = max_output_bytes
+        self.stdout_chunks: list[bytes] = []
+        self.stderr_chunks: list[bytes] = []
+        self.collected_bytes = 0
+        self.truncated = False
+        self._lock = threading.Lock()
+
+    def read_stream(self, stream: IO[bytes] | None, chunks: list[bytes]) -> None:
+        if stream is None:
+            return
+        try:
+            while True:
+                chunk = stream.read(4096)
+                if not chunk:
+                    break
+                with self._lock:
+                    if self.collected_bytes < self.max_output_bytes:
+                        space_left = self.max_output_bytes - self.collected_bytes
+                        accepted = chunk[:space_left]
+                        chunks.append(accepted)
+                        self.collected_bytes += len(accepted)
+                        if len(chunk) > space_left:
+                            self.truncated = True
+                    else:
+                        self.truncated = True
+        except Exception:
+            pass
+        finally:
+            with contextlib.suppress(Exception):
+                stream.close()
+
+    def start_collection(
+        self, proc: subprocess.Popen[bytes]
+    ) -> tuple[threading.Thread, threading.Thread]:
+        t_stdout = threading.Thread(target=self.read_stream, args=(proc.stdout, self.stdout_chunks))
+        t_stderr = threading.Thread(target=self.read_stream, args=(proc.stderr, self.stderr_chunks))
+        t_stdout.daemon = True
+        t_stderr.daemon = True
+        t_stdout.start()
+        t_stderr.start()
+        return t_stdout, t_stderr
+
+
+def _wait_for_process(
+    proc: subprocess.Popen[bytes],
+    timeout_seconds: float,
+) -> bool:
+    """Poll process until completion or timeout deadline, terminating process group if expired."""
+    deadline = time.perf_counter() + timeout_seconds
+    while proc.poll() is None:
+        remaining = deadline - time.perf_counter()
+        if remaining <= 0:
+            _terminate_process_group(proc)
+            return True
+        time.sleep(min(0.02, remaining))
+    return False
+
+
 class TrustedPytestRunner(CheckRunner):
     """Subprocess-based pytest runner for trusted local execution.
 
@@ -152,95 +245,13 @@ class TrustedPytestRunner(CheckRunner):
 
         try:
             proc = subprocess.Popen(command, **popen_kwargs)
-        except FileNotFoundError as exc:
-            wall_time = time.perf_counter() - start_time
-            return Evidence(
-                evidence_id=f"evi-{uuid4().hex[:8]}",
-                check_id=spec.check_id,
-                evidence_type="pytest_execution",
-                exit_code=127,
-                stdout="",
-                stderr=f"Execution failed: command or binary not found: {exc}",
-                output_truncated=False,
-                fingerprint=fingerprint,
-                resource_usage=ResourceUsage(wall_time_seconds=round(wall_time, 4)),
-            )
-        except PermissionError as exc:
-            wall_time = time.perf_counter() - start_time
-            return Evidence(
-                evidence_id=f"evi-{uuid4().hex[:8]}",
-                check_id=spec.check_id,
-                evidence_type="pytest_execution",
-                exit_code=126,
-                stdout="",
-                stderr=f"Execution failed: permission denied: {exc}",
-                output_truncated=False,
-                fingerprint=fingerprint,
-                resource_usage=ResourceUsage(wall_time_seconds=round(wall_time, 4)),
-            )
         except OSError as exc:
-            wall_time = time.perf_counter() - start_time
-            return Evidence(
-                evidence_id=f"evi-{uuid4().hex[:8]}",
-                check_id=spec.check_id,
-                evidence_type="pytest_execution",
-                exit_code=1,
-                stdout="",
-                stderr=f"Execution failed: OS error: {exc}",
-                output_truncated=False,
-                fingerprint=fingerprint,
-                resource_usage=ResourceUsage(wall_time_seconds=round(wall_time, 4)),
-            )
+            return _handle_spawn_error(exc, spec, fingerprint, start_time)
 
-        stdout_chunks: list[bytes] = []
-        stderr_chunks: list[bytes] = []
-        collected_bytes = 0
-        truncated = False
-        lock = threading.Lock()
+        collector = _StreamCollector(max_output_bytes=policy.max_output_bytes)
+        t_stdout, t_stderr = collector.start_collection(proc)
 
-        def _read_stream(stream: IO[bytes] | None, chunks: list[bytes]) -> None:
-            nonlocal collected_bytes, truncated
-            if stream is None:
-                return
-            try:
-                while True:
-                    chunk = stream.read(4096)
-                    if not chunk:
-                        break
-                    with lock:
-                        if collected_bytes < policy.max_output_bytes:
-                            space_left = policy.max_output_bytes - collected_bytes
-                            accepted = chunk[:space_left]
-                            chunks.append(accepted)
-                            collected_bytes += len(accepted)
-                            if len(chunk) > space_left:
-                                truncated = True
-                        else:
-                            truncated = True
-            except Exception:
-                pass
-            finally:
-                with contextlib.suppress(Exception):
-                    stream.close()
-
-        t_stdout = threading.Thread(target=_read_stream, args=(proc.stdout, stdout_chunks))
-        t_stderr = threading.Thread(target=_read_stream, args=(proc.stderr, stderr_chunks))
-        t_stdout.daemon = True
-        t_stderr.daemon = True
-        t_stdout.start()
-        t_stderr.start()
-
-        deadline = time.perf_counter() + policy.timeout_seconds
-        timed_out = False
-
-        while proc.poll() is None:
-            remaining = deadline - time.perf_counter()
-            if remaining <= 0:
-                timed_out = True
-                _terminate_process_group(proc)
-                break
-            time.sleep(min(0.02, remaining))
-
+        timed_out = _wait_for_process(proc, policy.timeout_seconds)
         wall_time = time.perf_counter() - start_time
         t_stdout.join(timeout=2.0)
         t_stderr.join(timeout=2.0)
@@ -252,11 +263,10 @@ class TrustedPytestRunner(CheckRunner):
             exit_code = proc.returncode if proc.returncode is not None else 1
             stderr_extra = b""
 
-        stdout_bytes = b"".join(stdout_chunks)
-        stderr_bytes = b"".join(stderr_chunks) + stderr_extra
-
-        stdout = stdout_bytes.decode("utf-8", errors="replace")
-        stderr = stderr_bytes.decode("utf-8", errors="replace")
+        stdout = b"".join(collector.stdout_chunks).decode("utf-8", errors="replace")
+        stderr = (b"".join(collector.stderr_chunks) + stderr_extra).decode(
+            "utf-8", errors="replace"
+        )
 
         return Evidence(
             evidence_id=f"evi-{uuid4().hex[:8]}",
@@ -265,11 +275,11 @@ class TrustedPytestRunner(CheckRunner):
             exit_code=exit_code,
             stdout=stdout,
             stderr=stderr,
-            output_truncated=truncated,
+            output_truncated=collector.truncated,
             fingerprint=fingerprint,
             resource_usage=ResourceUsage(
                 wall_time_seconds=round(wall_time, 4),
                 attempts=1,
-                output_bytes=collected_bytes,
+                output_bytes=collector.collected_bytes,
             ),
         )

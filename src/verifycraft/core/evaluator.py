@@ -24,6 +24,111 @@ def _pattern_matches(pattern: str, text: str) -> bool:
         return pattern in text
 
 
+def _evaluate_fail_or_error_outcome(
+    hypothesis: Hypothesis,
+    evidence: Evidence,
+    required_patterns: list[str],
+    missing_patterns: list[str],
+    exit_code_matched: bool,
+) -> Finding:
+    expected = hypothesis.expected_observation
+
+    if evidence.exit_code == 0:
+        # Check passed cleanly, contradicting the predicted failure
+        return Finding(
+            hypothesis_id=hypothesis.id,
+            verdict=Verdict.REFUTED,
+            reason="Check passed (exit code 0), contradicting predicted failure.",
+            evidence_ids=[evidence.evidence_id],
+        )
+
+    if not exit_code_matched:
+        return Finding(
+            hypothesis_id=hypothesis.id,
+            verdict=Verdict.INCONCLUSIVE,
+            reason=(
+                f"Check exited with unexpected code {evidence.exit_code} "
+                f"(expected {expected.expected_exit_codes})."
+            ),
+            evidence_ids=[evidence.evidence_id],
+        )
+
+    # Invariant: exit code alone without diagnostic pattern cannot prove specific regression
+    if not required_patterns:
+        return Finding(
+            hypothesis_id=hypothesis.id,
+            verdict=Verdict.INCONCLUSIVE,
+            reason=(
+                f"Check exited with code {evidence.exit_code}, but no diagnostic signature "
+                f"or failure mechanism was specified to confirm this specific hypothesis."
+            ),
+            evidence_ids=[evidence.evidence_id],
+        )
+
+    outcome_label = "failure" if expected.expected_outcome == "fail" else "error"
+    if not missing_patterns:
+        return Finding(
+            hypothesis_id=hypothesis.id,
+            verdict=Verdict.SUPPORTED,
+            reason=(
+                f"Observed expected {outcome_label} (exit code {evidence.exit_code}) "
+                f"and verified expected diagnostic signature."
+            ),
+            evidence_ids=[evidence.evidence_id],
+        )
+
+    # Exit code matched, but expected diagnostic signature was missing
+    if evidence.output_truncated:
+        return Finding(
+            hypothesis_id=hypothesis.id,
+            verdict=Verdict.INCONCLUSIVE,
+            reason=(
+                f"Check failed (exit code {evidence.exit_code}), but output was truncated "
+                f"and missing expected signature {missing_patterns}."
+            ),
+            evidence_ids=[evidence.evidence_id],
+        )
+    return Finding(
+        hypothesis_id=hypothesis.id,
+        verdict=Verdict.INCONCLUSIVE,
+        reason=(
+            f"Check failed (exit code {evidence.exit_code}), but did not produce "
+            f"expected diagnostic signature {missing_patterns}."
+        ),
+        evidence_ids=[evidence.evidence_id],
+    )
+
+
+def _evaluate_pass_outcome(
+    hypothesis: Hypothesis,
+    evidence: Evidence,
+    missing_patterns: list[str],
+    exit_code_matched: bool,
+) -> Finding:
+    if exit_code_matched and not missing_patterns:
+        return Finding(
+            hypothesis_id=hypothesis.id,
+            verdict=Verdict.SUPPORTED,
+            reason="Check passed cleanly as expected.",
+            evidence_ids=[evidence.evidence_id],
+        )
+
+    if evidence.exit_code != 0:
+        return Finding(
+            hypothesis_id=hypothesis.id,
+            verdict=Verdict.REFUTED,
+            reason=f"Check failed with exit {evidence.exit_code}, contradicting expected pass.",
+            evidence_ids=[evidence.evidence_id],
+        )
+
+    return Finding(
+        hypothesis_id=hypothesis.id,
+        verdict=Verdict.INCONCLUSIVE,
+        reason=f"Missing expected output patterns: {missing_patterns}.",
+        evidence_ids=[evidence.evidence_id],
+    )
+
+
 def evaluate_hypothesis(hypothesis: Hypothesis, evidence: Evidence) -> Finding:
     """Evaluate whether collected evidence supports, refutes, or is inconclusive for a hypothesis.
 
@@ -70,98 +175,24 @@ def evaluate_hypothesis(hypothesis: Hypothesis, evidence: Evidence) -> Finding:
     missing_patterns: list[str] = [
         p for p in required_patterns if not _pattern_matches(p, combined_output)
     ]
-    all_patterns_matched = len(missing_patterns) == 0
 
     # Case A: Regression hypothesis expected a failure or error
     if expected.expected_outcome in ("fail", "error"):
-        if evidence.exit_code == 0:
-            # Check passed cleanly, contradicting the predicted failure
-            return Finding(
-                hypothesis_id=hypothesis.id,
-                verdict=Verdict.REFUTED,
-                reason="Check passed (exit code 0), contradicting predicted failure.",
-                evidence_ids=[evidence.evidence_id],
-            )
-
-        if not exit_code_matched:
-            return Finding(
-                hypothesis_id=hypothesis.id,
-                verdict=Verdict.INCONCLUSIVE,
-                reason=(
-                    f"Check exited with unexpected code {evidence.exit_code} "
-                    f"(expected {expected.expected_exit_codes})."
-                ),
-                evidence_ids=[evidence.evidence_id],
-            )
-
-        # Invariant: exit code alone without diagnostic pattern cannot prove specific regression
-        if not required_patterns:
-            return Finding(
-                hypothesis_id=hypothesis.id,
-                verdict=Verdict.INCONCLUSIVE,
-                reason=(
-                    f"Check exited with code {evidence.exit_code}, but no diagnostic signature "
-                    f"or failure mechanism was specified to confirm this specific hypothesis."
-                ),
-                evidence_ids=[evidence.evidence_id],
-            )
-
-        outcome_label = "failure" if expected.expected_outcome == "fail" else "error"
-        if all_patterns_matched:
-            return Finding(
-                hypothesis_id=hypothesis.id,
-                verdict=Verdict.SUPPORTED,
-                reason=(
-                    f"Observed expected {outcome_label} (exit code {evidence.exit_code}) "
-                    f"and verified expected diagnostic signature."
-                ),
-                evidence_ids=[evidence.evidence_id],
-            )
-
-        # Exit code matched, but expected diagnostic signature was missing
-        if evidence.output_truncated:
-            return Finding(
-                hypothesis_id=hypothesis.id,
-                verdict=Verdict.INCONCLUSIVE,
-                reason=(
-                    f"Check failed (exit code {evidence.exit_code}), but output was truncated "
-                    f"and missing expected signature {missing_patterns}."
-                ),
-                evidence_ids=[evidence.evidence_id],
-            )
-        return Finding(
-            hypothesis_id=hypothesis.id,
-            verdict=Verdict.INCONCLUSIVE,
-            reason=(
-                f"Check failed (exit code {evidence.exit_code}), but did not produce "
-                f"expected diagnostic signature {missing_patterns}."
-            ),
-            evidence_ids=[evidence.evidence_id],
+        return _evaluate_fail_or_error_outcome(
+            hypothesis,
+            evidence,
+            required_patterns,
+            missing_patterns,
+            exit_code_matched,
         )
 
     # Case B: Hypothesis expected a passing outcome (e.g. exit code 0)
-    elif expected.expected_outcome == "pass":
-        if exit_code_matched and all_patterns_matched:
-            return Finding(
-                hypothesis_id=hypothesis.id,
-                verdict=Verdict.SUPPORTED,
-                reason="Check passed cleanly as expected.",
-                evidence_ids=[evidence.evidence_id],
-            )
-
-        if evidence.exit_code != 0:
-            return Finding(
-                hypothesis_id=hypothesis.id,
-                verdict=Verdict.REFUTED,
-                reason=f"Check failed with exit {evidence.exit_code}, contradicting expected pass.",
-                evidence_ids=[evidence.evidence_id],
-            )
-
-        return Finding(
-            hypothesis_id=hypothesis.id,
-            verdict=Verdict.INCONCLUSIVE,
-            reason=f"Missing expected output patterns: {missing_patterns}.",
-            evidence_ids=[evidence.evidence_id],
+    if expected.expected_outcome == "pass":
+        return _evaluate_pass_outcome(
+            hypothesis,
+            evidence,
+            missing_patterns,
+            exit_code_matched,
         )
 
     # Fallback for unhandled configuration

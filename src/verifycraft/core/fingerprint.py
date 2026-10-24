@@ -82,6 +82,80 @@ def _extract_affected_location_paths(affected_locations: Sequence[str]) -> set[s
     return paths
 
 
+def _scan_root_items(repo_path: Path, scope_paths: set[str], max_scope_files: int) -> None:
+    """Scan root-level Python modules and configs into scope_paths."""
+    for root_item in repo_path.glob("*"):
+        if not root_item.is_file() or root_item.name.startswith("."):
+            continue
+        if root_item.suffix in SCOPED_FILE_EXTENSIONS:
+            scope_paths.add(root_item.name)
+            if len(scope_paths) > max_scope_files:
+                raise FingerprintError(
+                    f"Verification scope exceeded maximum limit of {max_scope_files} "
+                    f"relevant files (discovered {len(scope_paths)}). "
+                    "Reliable verification scope cannot be determined; failing closed."
+                )
+
+
+def _collect_candidate_scan_roots(repo_path: Path, clean_target: str) -> list[Path]:
+    """Collect candidate directories to scan (src, tests, or check target parent)."""
+    candidate_dirs = [repo_path / "src", repo_path / "tests"]
+    if clean_target:
+        target_parent = (repo_path / clean_target).parent
+        if target_parent.is_dir() and target_parent not in candidate_dirs:
+            candidate_dirs.append(target_parent)
+
+    existing = [d for d in candidate_dirs if d.is_dir()]
+    return existing if existing else [repo_path]
+
+
+def _is_ignored_path(item: Path, repo_path: Path) -> bool:
+    """Determine whether a path should be excluded from verification scope."""
+    if any(ignored in item.parts for ignored in IGNORED_DIRECTORIES):
+        return True
+    try:
+        rel_parts = item.relative_to(repo_path).parts
+        return any(part.startswith(".") for part in rel_parts)
+    except ValueError:
+        return True
+
+
+def _scan_candidate_root(
+    repo_path: Path,
+    scan_root: Path,
+    scope_paths: set[str],
+    max_scope_files: int,
+) -> None:
+    """Scan a single candidate root directory recursively for scoped files."""
+    for item in scan_root.rglob("*"):
+        if _is_ignored_path(item, repo_path):
+            continue
+
+        if item.is_file() and item.suffix in SCOPED_FILE_EXTENSIONS:
+            try:
+                rel = item.relative_to(repo_path).as_posix()
+                scope_paths.add(rel)
+                if len(scope_paths) > max_scope_files:
+                    raise FingerprintError(
+                        f"Verification scope exceeded maximum limit of {max_scope_files} "
+                        f"relevant files (discovered {len(scope_paths)}). "
+                        "Reliable verification scope cannot be determined; failing closed."
+                    )
+            except ValueError:
+                continue
+
+
+def _scan_candidate_directories(
+    repo_path: Path,
+    scan_roots: list[Path],
+    scope_paths: set[str],
+    max_scope_files: int,
+) -> None:
+    """Scan candidate directories for scoped files."""
+    for scan_root in scan_roots:
+        _scan_candidate_root(repo_path, scan_root, scope_paths, max_scope_files)
+
+
 def resolve_verification_scope(
     repo_path: Path,
     check_spec: CheckSpec,
@@ -116,62 +190,67 @@ def resolve_verification_scope(
             scope_paths.add(Path(clean_tf).as_posix())
 
     # 3. Affected locations
-    scope_paths.update(
-        Path(p).as_posix() for p in _extract_affected_location_paths(affected_locations)
-    )
+    for loc_path in _extract_affected_location_paths(affected_locations):
+        scope_paths.add(Path(loc_path).as_posix())
 
     # 4. Diff files
-    scope_paths.update(Path(p).as_posix() for p in _parse_diff_file_paths(diff))
+    for diff_path in _parse_diff_file_paths(diff):
+        scope_paths.add(Path(diff_path).as_posix())
 
     # 5. Discover relevant repo source and test files (handling omitted target_files)
     if repo_path.is_dir():
-        # Always scan root-level Python modules and configs (even when src/ and tests/ exist)
-        for root_item in repo_path.glob("*"):
-            if not root_item.is_file() or root_item.name.startswith("."):
-                continue
-            if root_item.suffix in SCOPED_FILE_EXTENSIONS:
-                scope_paths.add(root_item.name)
-                if len(scope_paths) > max_scope_files:
-                    raise FingerprintError(
-                        f"Verification scope exceeded maximum limit of {max_scope_files} "
-                        f"relevant files (discovered {len(scope_paths)}). "
-                        "Reliable verification scope cannot be determined; failing closed."
-                    )
-
-        candidate_dirs = [repo_path / "src", repo_path / "tests"]
-        if clean_target:
-            target_parent = (repo_path / clean_target).parent
-            if target_parent.is_dir() and target_parent not in candidate_dirs:
-                candidate_dirs.append(target_parent)
-
-        existing_candidate_dirs = [d for d in candidate_dirs if d.is_dir()]
-        scan_roots = existing_candidate_dirs if existing_candidate_dirs else [repo_path]
-
-        for scan_root in scan_roots:
-            for item in scan_root.rglob("*"):
-                if any(ignored in item.parts for ignored in IGNORED_DIRECTORIES):
-                    continue
-                try:
-                    rel_parts = item.relative_to(repo_path).parts
-                    if any(part.startswith(".") for part in rel_parts):
-                        continue
-                except ValueError:
-                    continue
-
-                if item.is_file() and item.suffix in SCOPED_FILE_EXTENSIONS:
-                    try:
-                        rel = item.relative_to(repo_path).as_posix()
-                        scope_paths.add(rel)
-                        if len(scope_paths) > max_scope_files:
-                            raise FingerprintError(
-                                f"Verification scope exceeded maximum limit of {max_scope_files} "
-                                f"relevant files (discovered {len(scope_paths)}). "
-                                "Reliable verification scope cannot be determined; failing closed."
-                            )
-                    except ValueError:
-                        continue
+        _scan_root_items(repo_path, scope_paths, max_scope_files)
+        scan_roots = _collect_candidate_scan_roots(repo_path, clean_target)
+        _scan_candidate_directories(repo_path, scan_roots, scope_paths, max_scope_files)
 
     return sorted(scope_paths)
+
+
+def _hash_file_content(path: Path) -> str:
+    """Compute sha256 hash of a file's content in 64KB chunks."""
+    hasher = hashlib.sha256()
+    with open(path, "rb") as f:
+        while chunk := f.read(65536):
+            hasher.update(chunk)
+    return hasher.hexdigest()
+
+
+def _process_scoped_file(
+    repo: Path,
+    repo_path: str,
+    rel_path: str,
+    clean_target: str,
+    target_files_normalized: set[str],
+    check_type: CheckType,
+) -> str:
+    """Validate and hash a single scoped file, returning hash or '<missing>'."""
+    target_path_obj = (repo / rel_path).resolve()
+
+    # Prevent directory traversal escaping repo
+    try:
+        target_path_obj.relative_to(repo.resolve())
+    except ValueError:
+        raise FingerprintError(
+            f"Scoped file '{rel_path}' escapes repository boundary '{repo_path}'."
+        ) from None
+
+    if not target_path_obj.is_file():
+        # For non-fake checks, target paths and explicit target_files MUST exist on disk
+        if check_type != CheckType.FAKE:
+            if rel_path == clean_target:
+                raise FingerprintError(
+                    f"Check target file does not exist on disk: '{rel_path}' in '{repo_path}'."
+                )
+            if rel_path in target_files_normalized:
+                raise FingerprintError(
+                    f"Target file does not exist on disk: '{rel_path}' in '{repo_path}'."
+                )
+        return "<missing>"
+
+    try:
+        return _hash_file_content(target_path_obj)
+    except OSError as err:
+        raise FingerprintError(f"Cannot read file '{rel_path}' for fingerprinting: {err}") from err
 
 
 def compute_fingerprint(
@@ -207,43 +286,17 @@ def compute_fingerprint(
 
     clean_target = Path(check_spec.target_path.split("::")[0].strip()).as_posix()
     target_files_normalized = {Path(tf.strip()).as_posix() for tf in target_files if tf.strip()}
-    file_hashes: dict[str, str] = {}
-
-    for rel_path in scope:
-        target_path_obj = (repo / rel_path).resolve()
-
-        # Prevent directory traversal escaping repo
-        try:
-            target_path_obj.relative_to(repo.resolve())
-        except ValueError:
-            raise FingerprintError(
-                f"Scoped file '{rel_path}' escapes repository boundary '{repo_path}'."
-            ) from None
-
-        if not target_path_obj.is_file():
-            # For non-fake checks, target paths and explicit target_files MUST exist on disk
-            if check_spec.check_type != CheckType.FAKE:
-                if rel_path == clean_target:
-                    raise FingerprintError(
-                        f"Check target file does not exist on disk: '{rel_path}' in '{repo_path}'."
-                    )
-                if rel_path in target_files_normalized:
-                    raise FingerprintError(
-                        f"Target file does not exist on disk: '{rel_path}' in '{repo_path}'."
-                    )
-            file_hashes[rel_path] = "<missing>"
-            continue
-
-        try:
-            hasher = hashlib.sha256()
-            with open(target_path_obj, "rb") as f:
-                while chunk := f.read(65536):
-                    hasher.update(chunk)
-            file_hashes[rel_path] = hasher.hexdigest()
-        except OSError as err:
-            raise FingerprintError(
-                f"Cannot read file '{rel_path}' for fingerprinting: {err}"
-            ) from err
+    file_hashes: dict[str, str] = {
+        rel_path: _process_scoped_file(
+            repo=repo,
+            repo_path=repo_path,
+            rel_path=rel_path,
+            clean_target=clean_target,
+            target_files_normalized=target_files_normalized,
+            check_type=check_spec.check_type,
+        )
+        for rel_path in scope
+    }
 
     payload = {
         "revision": revision.strip(),

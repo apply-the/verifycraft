@@ -142,6 +142,69 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _load_input_from_file(input_path_arg: Path) -> VerificationInput:
+    input_path = input_path_arg.resolve()
+    try:
+        if not input_path.is_file():
+            raise FileNotFoundError(f"File not found or not a regular file: {input_path_arg}")
+        raw_json = input_path.read_text(encoding="utf-8")
+        return VerificationInput.model_validate_json(raw_json)
+    except Exception as exc:
+        print(f"Error reading input JSON: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+
+def _build_input_from_args(args: argparse.Namespace) -> VerificationInput:
+    if not args.target or not args.claim:
+        print(
+            "Error: Either --input <file> or both --target and --claim must be specified.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    hyp = Hypothesis(
+        id="hyp-cli",
+        claim=args.claim,
+        expected_observation=ExpectedObservation(
+            expected_outcome="fail",
+            expected_exit_codes=[1],
+            match_patterns=args.match_pattern,
+        ),
+    )
+    spec = CheckSpec(
+        check_id="chk-cli",
+        check_type=CheckType.PYTEST,
+        target_path=args.target,
+    )
+    return VerificationInput(
+        repo_path=args.repo,
+        hypothesis=hyp,
+        check_spec=spec,
+    )
+
+
+def _execute_verify(args: argparse.Namespace) -> None:
+    verification_input = (
+        _load_input_from_file(args.input) if args.input else _build_input_from_args(args)
+    )
+
+    policy = ExecutionPolicy(
+        mode=ExecutionMode(args.mode),
+        timeout_seconds=args.timeout,
+        untrusted_code=args.untrusted,
+    )
+
+    engine = VerificationEngine()
+    result = engine.verify(verification_input, policy=policy)
+
+    if args.format == "json":
+        print(result.to_json(indent=2))
+    else:
+        print(_format_summary(result))
+
+    sys.exit(VERDICT_EXIT_CODES.get(result.verdict, 1))
+
+
 def main(argv: Sequence[str] | None = None) -> None:
     parser = build_parser()
     args = parser.parse_args(argv if argv is not None else sys.argv[1:])
@@ -151,60 +214,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         sys.exit(0)
 
     if args.subcommand == "verify":
-        # Load or construct VerificationInput
-        if args.input:
-            input_path = args.input.resolve()
-            try:
-                if not input_path.is_file():
-                    raise FileNotFoundError(f"File not found or not a regular file: {args.input}")
-                raw_json = input_path.read_text(encoding="utf-8")
-                verification_input = VerificationInput.model_validate_json(raw_json)
-            except Exception as exc:
-                print(f"Error reading input JSON: {exc}", file=sys.stderr)
-                sys.exit(1)
-        else:
-            if not args.target or not args.claim:
-                print(
-                    "Error: Either --input <file> or both --target and --claim must be specified.",
-                    file=sys.stderr,
-                )
-                sys.exit(1)
-
-            hyp = Hypothesis(
-                id="hyp-cli",
-                claim=args.claim,
-                expected_observation=ExpectedObservation(
-                    expected_outcome="fail",
-                    expected_exit_codes=[1],
-                    match_patterns=args.match_pattern,
-                ),
-            )
-            spec = CheckSpec(
-                check_id="chk-cli",
-                check_type=CheckType.PYTEST,
-                target_path=args.target,
-            )
-            verification_input = VerificationInput(
-                repo_path=args.repo,
-                hypothesis=hyp,
-                check_spec=spec,
-            )
-
-        policy = ExecutionPolicy(
-            mode=ExecutionMode(args.mode),
-            timeout_seconds=args.timeout,
-            untrusted_code=args.untrusted,
-        )
-
-        engine = VerificationEngine()
-        result = engine.verify(verification_input, policy=policy)
-
-        if args.format == "json":
-            print(result.to_json(indent=2))
-        else:
-            print(_format_summary(result))
-
-        sys.exit(VERDICT_EXIT_CODES.get(result.verdict, 1))
+        _execute_verify(args)
 
 
 if __name__ == "__main__":
