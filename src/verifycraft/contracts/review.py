@@ -301,7 +301,13 @@ class ReviewRequest(BaseModel):
     )
     provider: str = Field(
         default="gemini",
-        description="Reviewer provider name ('gemini', 'deterministic', 'fake').",
+        description=(
+            "Reviewer provider name ('gemini', 'deterministic', 'fake', 'none', 'model-free')."
+        ),
+    )
+    model: str | None = Field(
+        default=None,
+        description="Optional model identifier override (e.g. 'gemini-2.5-pro').",
     )
     policy: ReviewPolicy = Field(
         default_factory=ReviewPolicy,
@@ -339,6 +345,10 @@ class ReviewReport(BaseModel):
     head_revision: str = Field(description="Head revision name.")
     base_commit: str | None = Field(default=None, description="Resolved base commit hash.")
     head_commit: str | None = Field(default=None, description="Resolved head commit hash.")
+    is_working_tree: bool = Field(
+        default=False,
+        description="Whether the head revision inspected uncommitted working tree state.",
+    )
     findings: list[ReviewFinding] = Field(
         default_factory=list,
         description="Actionable review findings.",

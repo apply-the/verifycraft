@@ -7,9 +7,11 @@ Does not duplicate any verification or review business logic.
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from collections.abc import Sequence
 from pathlib import Path
+from typing import Any
 
 from verifycraft import __version__
 from verifycraft.contracts.models import (
@@ -24,6 +26,7 @@ from verifycraft.contracts.models import (
     VerificationResult,
 )
 from verifycraft.contracts.review import (
+    ReviewFinding,
     ReviewPolicy,
     ReviewRequest,
 )
@@ -182,9 +185,25 @@ def build_parser() -> argparse.ArgumentParser:
         help="Path to requirement document or text (can be specified multiple times).",
     )
     review_parser.add_argument(
+        "--candidates",
+        "--candidate-findings",
+        type=Path,
+        dest="candidates",
+        default=None,
+        help="Path to JSON file containing structured candidate findings for model-free review.",
+    )
+    review_parser.add_argument(
         "--provider",
-        default="gemini",
-        help="Reviewer model provider: 'gemini', 'deterministic', 'fake' (default: gemini).",
+        default=None,
+        help=(
+            "Reviewer model provider: 'gemini', 'deterministic', 'fake', 'none'. "
+            "Required unless --candidates is provided."
+        ),
+    )
+    review_parser.add_argument(
+        "--model",
+        default=None,
+        help="Model name override (e.g. 'gemini-2.5-pro').",
     )
     review_parser.add_argument(
         "--format",
@@ -270,7 +289,64 @@ def _execute_verify(args: argparse.Namespace) -> None:
     sys.exit(VERDICT_EXIT_CODES.get(result.verdict, 1))
 
 
+def _load_candidates_from_file(candidates_path_arg: Path) -> list[ReviewFinding]:
+    path = candidates_path_arg.resolve()
+    if not path.is_file():
+        print(f"Error: Candidate findings file not found: {candidates_path_arg}", file=sys.stderr)
+        sys.exit(1)
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        items: list[Any] = []
+        if isinstance(raw, list):
+            items = raw
+        elif isinstance(raw, dict):
+            if "candidate_findings" in raw and isinstance(raw["candidate_findings"], list):
+                items = raw["candidate_findings"]
+            elif "findings" in raw and isinstance(raw["findings"], list):
+                items = raw["findings"]
+            else:
+                items = [raw]
+        else:
+            raise ValueError("JSON content must be a list or object containing findings")
+
+        findings: list[ReviewFinding] = []
+        for idx, item in enumerate(items):
+            if not isinstance(item, dict):
+                continue
+            if "id" not in item:
+                item["id"] = f"cand-{idx + 1:03d}"
+            findings.append(ReviewFinding.model_validate(item))
+        return findings
+    except Exception as e:
+        print(f"Error parsing candidate findings JSON: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
 def _execute_review(args: argparse.Namespace) -> None:
+    candidates: list[ReviewFinding] = []
+    if args.candidates:
+        candidates = _load_candidates_from_file(args.candidates)
+
+    provider = args.provider
+    if not provider:
+        if candidates:
+            provider = "none"
+        else:
+            print(
+                "Error: Explicit provider selection is required (e.g. '--provider gemini', "
+                "'--provider deterministic') or provide candidate findings via "
+                "'--candidates <file>'.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
+    if provider.lower() == "gemini":
+        print(
+            "VerifyCraft: Remote provider 'gemini' selected. "
+            "Note: git diff and relevant surrounding code will be transmitted to the Gemini API.",
+            file=sys.stderr,
+        )
+
     policy = ReviewPolicy(
         timeout_seconds=args.timeout,
         fail_on_blocking=args.strict,
@@ -281,7 +357,9 @@ def _execute_review(args: argparse.Namespace) -> None:
         base_revision=args.base,
         head_revision=args.head,
         requirements=args.requirements,
-        provider=args.provider,
+        candidate_findings=candidates,
+        provider=provider,
+        model=args.model,
         policy=policy,
     )
 

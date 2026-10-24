@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from typing import Any
 
 from verifycraft.review.providers.base import (
@@ -40,6 +41,15 @@ class GeminiReviewerAdapter(ReviewerModelAdapter):
         )
         self._client: Any = None
 
+    def _sanitize_secrets(self, text: str) -> str:
+        """Sanitize API keys and secret patterns from strings and exceptions."""
+        sanitized = text.replace(self.api_key, "[REDACTED]")
+        sanitized = re.sub(r"AIza[0-9A-Za-z\-_]{35}", "[REDACTED]", sanitized)
+        sanitized = re.sub(
+            r"(?i)(key|token|secret)[:=]\s*['\"]?[\w\-]{16,}['\"]?", r"\1=[REDACTED]", sanitized
+        )
+        return sanitized
+
     def _get_client(self) -> Any:
         """Lazily initialize the google-genai client."""
         if self._client is not None:
@@ -57,8 +67,7 @@ class GeminiReviewerAdapter(ReviewerModelAdapter):
             self._client = genai.Client(api_key=self.api_key)
             return self._client
         except Exception as e:
-            # Mask API key if accidentally present in error
-            clean_err = str(e).replace(self.api_key, "[REDACTED]")
+            clean_err = self._sanitize_secrets(str(e))
             raise ProviderConfigurationError(
                 f"Failed to initialize Gemini client: {clean_err}"
             ) from e
@@ -120,6 +129,10 @@ class GeminiReviewerAdapter(ReviewerModelAdapter):
         try:
             from google.genai import types
 
+            http_opts = None
+            if timeout_seconds and timeout_seconds > 0:
+                http_opts = types.HttpOptions(timeout=int(timeout_seconds * 1000))
+
             response = client.models.generate_content(
                 model=self.model_name,
                 contents=full_prompt,
@@ -127,10 +140,15 @@ class GeminiReviewerAdapter(ReviewerModelAdapter):
                     system_instruction=system_prompt,
                     response_mime_type="application/json",
                     temperature=0.1,
+                    http_options=http_opts,
                 ),
             )
         except Exception as e:
-            clean_err = str(e).replace(self.api_key, "[REDACTED]")
+            clean_err = self._sanitize_secrets(str(e))
+            if "timeout" in clean_err.lower() or "deadline" in clean_err.lower():
+                raise ProviderCallError(
+                    f"Gemini API call timed out after {timeout_seconds}s: {clean_err}"
+                ) from e
             raise ProviderCallError(f"Gemini API call failed: {clean_err}") from e
 
         raw_text = response.text or ""
