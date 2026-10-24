@@ -54,17 +54,38 @@ VerifyCraft is developing in sequential outcome-based stages (see [ROADMAP.md](d
 
 ## Installation
 
-### From PyPI (Standard / Production)
+### CLI (Recommended)
 
-Install VerifyCraft using `pip` or `uv`:
+Install VerifyCraft from [PyPI](https://pypi.org/project/verifycraft/) as a standalone command-line tool. No Python project or `pyproject.toml` is required:
 
 ```bash
-# Using pip
-pip install verifycraft
-
-# Using uv
-uv add verifycraft
+uv tool install verifycraft==0.1.0
+verifycraft --version
 ```
+
+Alternatively, run the CLI without installing it permanently:
+
+```bash
+uvx verifycraft@0.1.0 --help
+```
+
+If the installed command is not found, run `uv tool update-shell` and restart your terminal.
+
+### Python SDK (Project Dependency)
+
+To import VerifyCraft in an existing Python project, run the following from the project directory, where `pyproject.toml` is located:
+
+```bash
+uv add verifycraft==0.1.0
+```
+
+Or install it in an activated Python virtual environment using `pip`:
+
+```bash
+python -m pip install verifycraft==0.1.0
+```
+
+`uv add` manages project dependencies and requires a `pyproject.toml`; it is not the command for installing a standalone CLI from your home directory.
 
 ### From Source (Development)
 
