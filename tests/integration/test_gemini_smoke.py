@@ -12,20 +12,13 @@ from verifycraft.review.providers.base import ProviderConfigurationError
 from verifycraft.review.providers.gemini import GeminiReviewerAdapter
 
 
-def test_gemini_missing_credentials_raises() -> None:
+def test_gemini_missing_credentials_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     """Verifies that missing credentials raise ProviderConfigurationError immediately."""
-    # Temporarily hide credentials if set
-    old_gemini = os.environ.pop("GEMINI_API_KEY", None)
-    old_google = os.environ.pop("GOOGLE_API_KEY", None)
-    try:
-        with pytest.raises(ProviderConfigurationError) as exc_info:
-            GeminiReviewerAdapter(api_key=None)
-        assert "requires GEMINI_API_KEY or GOOGLE_API_KEY" in str(exc_info.value)
-    finally:
-        if old_gemini:
-            os.environ["GEMINI_API_KEY"] = old_gemini
-        if old_google:
-            os.environ["GOOGLE_API_KEY"] = old_google
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+    with pytest.raises(ProviderConfigurationError) as exc_info:
+        GeminiReviewerAdapter(api_key=None)
+    assert "requires GEMINI_API_KEY or GOOGLE_API_KEY" in str(exc_info.value)
 
 
 @pytest.mark.skipif(

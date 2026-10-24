@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import re
 import subprocess
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -116,6 +117,89 @@ class GitContextCollector:
         except GitError as e:
             raise GitError(f"Failed to diff '{base_ref}' against '{head_ref}': {e}") from e
 
+    def _parse_diff_header(self, lines: list[str]) -> tuple[str, str | None, str] | None:
+        """Parse the header lines of a single file diff chunk."""
+        if not lines:
+            return None
+
+        first_line = lines[0]
+        if not first_line.startswith("diff --git a/"):
+            return None
+
+        parts = first_line[len("diff --git a/") :].split(" b/", 1)
+        if len(parts) != 2:
+            return None
+
+        old_path, new_path = parts[0], parts[1]
+        status = "modified"
+
+        for line in lines[1:10]:
+            if line.startswith("new file mode"):
+                status = "added"
+            elif line.startswith("deleted file mode"):
+                status = "deleted"
+            elif line.startswith(("similarity index", "rename from")):
+                status = "renamed"
+
+        target_path = new_path if status != "deleted" else old_path
+        renamed_old = old_path if status == "renamed" else None
+        return target_path, renamed_old, status
+
+    def _parse_hunks(self, lines: list[str]) -> tuple[list[DiffHunk], set[int]]:
+        """Parse unified diff hunk lines into DiffHunk objects and changed line numbers."""
+        hunks: list[DiffHunk] = []
+        changed_lines: set[int] = set()
+
+        current_new_line = 0
+        in_hunk = False
+        hunk_lines: list[str] = []
+        hunk_old_start = hunk_old_len = hunk_new_start = hunk_new_len = 0
+
+        for line in lines:
+            hunk_match = re.match(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@", line)
+            if hunk_match:
+                if in_hunk:
+                    hunks.append(
+                        DiffHunk(
+                            old_start=hunk_old_start,
+                            old_lines=hunk_old_len,
+                            new_start=hunk_new_start,
+                            new_lines=hunk_new_len,
+                            content="\n".join(hunk_lines),
+                        )
+                    )
+                    hunk_lines = []
+
+                in_hunk = True
+                hunk_old_start = int(hunk_match.group(1))
+                hunk_old_len = int(hunk_match.group(2) or 1)
+                hunk_new_start = int(hunk_match.group(3))
+                hunk_new_len = int(hunk_match.group(4) or 1)
+                current_new_line = hunk_new_start
+                hunk_lines.append(line)
+                continue
+
+            if in_hunk:
+                hunk_lines.append(line)
+                if line.startswith("+"):
+                    changed_lines.add(current_new_line)
+                    current_new_line += 1
+                elif line.startswith(" "):
+                    current_new_line += 1
+
+        if in_hunk:
+            hunks.append(
+                DiffHunk(
+                    old_start=hunk_old_start,
+                    old_lines=hunk_old_len,
+                    new_start=hunk_new_start,
+                    new_lines=hunk_new_len,
+                    content="\n".join(hunk_lines),
+                )
+            )
+
+        return hunks, changed_lines
+
     def parse_diff(self, diff_text: str) -> dict[str, ChangedFile]:
         """Parse unified diff text into structured ChangedFile objects."""
         changed: dict[str, ChangedFile] = {}
@@ -123,92 +207,22 @@ class GitContextCollector:
             return changed
 
         file_diffs = re.split(r"(^diff --git )", diff_text, flags=re.MULTILINE)
-        chunks: list[str] = []
         for i in range(1, len(file_diffs), 2):
-            chunks.append(file_diffs[i] + file_diffs[i + 1])
-
-        for chunk in chunks:
+            chunk = file_diffs[i] + file_diffs[i + 1]
             lines = chunk.splitlines()
-            if not lines:
+            header_info = self._parse_diff_header(lines)
+            if not header_info:
                 continue
 
-            header_match = re.match(r"^diff --git a/(.*?) b/(.*)$", lines[0])
-            if not header_match:
-                continue
-
-            old_path = header_match.group(1)
-            new_path = header_match.group(2)
-            status = "modified"
-
-            for line in lines[1:10]:
-                if line.startswith("new file mode"):
-                    status = "added"
-                elif line.startswith("deleted file mode"):
-                    status = "deleted"
-                elif line.startswith("similarity index") or line.startswith("rename from"):
-                    status = "renamed"
-
-            target_path = new_path if status != "deleted" else old_path
-            changed_file = ChangedFile(
+            target_path, old_path, status = header_info
+            hunks, changed_lines = self._parse_hunks(lines)
+            changed[target_path] = ChangedFile(
                 path=target_path,
-                old_path=old_path if status == "renamed" else None,
+                old_path=old_path,
                 status=status,
+                hunks=hunks,
+                changed_lines=changed_lines,
             )
-
-            current_new_line = 0
-            in_hunk = False
-            hunk_lines: list[str] = []
-            hunk_old_start = 0
-            hunk_old_len = 0
-            hunk_new_start = 0
-            hunk_new_len = 0
-
-            for line in lines:
-                hunk_match = re.match(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@", line)
-                if hunk_match:
-                    if in_hunk:
-                        changed_file.hunks.append(
-                            DiffHunk(
-                                old_start=hunk_old_start,
-                                old_lines=hunk_old_len,
-                                new_start=hunk_new_start,
-                                new_lines=hunk_new_len,
-                                content="\n".join(hunk_lines),
-                            )
-                        )
-                        hunk_lines = []
-
-                    in_hunk = True
-                    hunk_old_start = int(hunk_match.group(1))
-                    hunk_old_len = int(hunk_match.group(2) or 1)
-                    hunk_new_start = int(hunk_match.group(3))
-                    hunk_new_len = int(hunk_match.group(4) or 1)
-                    current_new_line = hunk_new_start
-                    hunk_lines.append(line)
-                    continue
-
-                if in_hunk:
-                    hunk_lines.append(line)
-                    if line.startswith("+"):
-                        changed_file.changed_lines.add(current_new_line)
-                        current_new_line += 1
-                    elif line.startswith(" "):
-                        current_new_line += 1
-                    elif line.startswith("-"):
-                        pass
-
-            if in_hunk:
-                changed_file.hunks.append(
-                    DiffHunk(
-                        old_start=hunk_old_start,
-                        old_lines=hunk_old_len,
-                        new_start=hunk_new_start,
-                        new_lines=hunk_new_len,
-                        content="\n".join(hunk_lines),
-                    )
-                )
-
-            changed[target_path] = changed_file
 
         return changed
 
@@ -227,17 +241,8 @@ class GitContextCollector:
                     return None
             return None
 
-    def find_related_context(
-        self,
-        changed_files: dict[str, ChangedFile],
-        head_ref: str,
-        max_bytes: int = 64 * 1024,
-    ) -> dict[str, str]:
-        """Find compensating logic, helpers, and test files associated with changed files."""
-        related: dict[str, str] = {}
-        total_bytes = 0
-
-        # Scan changed files for imports
+    def _extract_imported_modules(self, changed_files: dict[str, ChangedFile]) -> set[str]:
+        """Scan changed Python files for imported module base names."""
         imported_modules: set[str] = set()
         for cfile in changed_files.values():
             if not cfile.content or not cfile.path.endswith(".py"):
@@ -246,14 +251,16 @@ class GitContextCollector:
                 line = line.strip()
                 import_match = re.match(r"^from ([\w\.]+) import", line)
                 if import_match:
-                    mod = import_match.group(1).split(".")[0]
-                    imported_modules.add(mod)
+                    imported_modules.add(import_match.group(1).split(".")[0])
                 import_match2 = re.match(r"^import ([\w\.]+)", line)
                 if import_match2:
-                    mod = import_match2.group(1).split(".")[0]
-                    imported_modules.add(mod)
+                    imported_modules.add(import_match2.group(1).split(".")[0])
+        return imported_modules
 
-        # Look for imported module files in repo
+    def _build_candidate_paths(
+        self, imported_modules: set[str], changed_paths: Iterable[str]
+    ) -> list[str]:
+        """Construct candidate file paths for helpers, modules, and tests."""
         candidate_paths: list[str] = []
         for mod in imported_modules:
             candidate_paths.extend(
@@ -267,10 +274,8 @@ class GitContextCollector:
                 ]
             )
 
-        # Also search for tests corresponding to changed files
-        for path in changed_files:
-            p = Path(path)
-            stem = p.stem
+        for path in changed_paths:
+            stem = Path(path).stem
             candidate_paths.extend(
                 [
                     f"tests/test_{stem}.py",
@@ -278,6 +283,21 @@ class GitContextCollector:
                     f"tests/{stem}_test.py",
                 ]
             )
+
+        return candidate_paths
+
+    def find_related_context(
+        self,
+        changed_files: dict[str, ChangedFile],
+        head_ref: str,
+        max_bytes: int = 64 * 1024,
+    ) -> dict[str, str]:
+        """Find compensating logic, helpers, and test files associated with changed files."""
+        related: dict[str, str] = {}
+        total_bytes = 0
+
+        imported_modules = self._extract_imported_modules(changed_files)
+        candidate_paths = self._build_candidate_paths(imported_modules, changed_files.keys())
 
         for cand in candidate_paths:
             if cand in changed_files or cand in related:
@@ -333,7 +353,7 @@ class GitContextCollector:
             )
 
         total_bytes = 0
-        for path, cfile in list(changed_files.items()):
+        for path, cfile in changed_files.items():
             if cfile.status == "deleted":
                 continue
             content = self.read_file_at_ref(path, head_revision)

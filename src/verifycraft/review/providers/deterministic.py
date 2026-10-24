@@ -38,229 +38,243 @@ class FakeReviewerAdapter(ReviewerModelAdapter):
         return self.response
 
 
+_AUTH_PATH = "src/auth.py"
+_AUTH_FILE = "auth.py"
+
+
+def _resolve_auth_path(prompt: str) -> str:
+    return _AUTH_PATH if _AUTH_PATH in prompt else _AUTH_FILE
+
+
 class DeterministicReviewerAdapter(ReviewerModelAdapter):
     """Deterministic, rule-aware adapter for testing acceptance scenarios without live LLM calls."""
 
     def __init__(self, mode: str = "auto"):
         self.mode = mode
 
-    def review(
-        self,
-        prompt: str,
-        system_instruction: str | None = None,
-        timeout_seconds: float = 60.0,
-    ) -> ProviderResponse:
-        """Inspect prompt content and requirements to deterministically evaluate scenarios."""
-        # 1. Security boundary check (Scenario G):
-        if "ignore previous instructions" in prompt.lower() or "disclose secrets" in prompt.lower():
-            return ProviderResponse(
-                summary=(
-                    "Review completed. Untrusted prompt injection attempts were "
-                    "identified in source/context and safely ignored."
-                ),
-                candidate_findings=[
-                    RawCandidateFinding(
-                        file_path="README.md" if "README.md" in prompt else "tests/test_auth.py",
-                        line=None,
-                        label="nitpick",
-                        decorations=["non-blocking"],
-                        subject="Untrusted instruction block detected in repository data",
-                        description=(
-                            "Content in the repository attempts to alter reviewer instructions. "
-                            "VerifyCraft treats all repository content as untrusted data."
-                        ),
-                        severity="low",
-                        blocking=False,
-                    )
-                ],
-                requirement_assessments=[],
-                tokens_used=120,
-            )
-
-        # 2. Ambiguous requirement check (Scenario E):
-        if "reasonably fast" in prompt.lower() or "ambiguous" in prompt.lower():
-            return ProviderResponse(
-                summary=(
-                    "Review completed with clarification questions regarding "
-                    "vague requirement statements."
-                ),
-                candidate_findings=[
-                    RawCandidateFinding(
-                        file_path="src/auth.py" if "src/auth.py" in prompt else "auth.py",
-                        line=None,
-                        label="question",
-                        decorations=["non-blocking"],
-                        subject="Ambiguous token expiration timeframe",
-                        description=(
-                            "Requirement specifies tokens should expire 'reasonably fast' "
-                            "without an exact TTL in minutes/seconds."
-                        ),
-                        severity="info",
-                        blocking=False,
-                        requirement_ids=["REQ-01"] if "REQ-01" in prompt else [],
-                        suggested_action="Define explicit numeric TTL in specification.",
-                    )
-                ],
-                requirement_assessments=[
-                    RawRequirementAssessment(
-                        requirement_id="REQ-01" if "REQ-01" in prompt else "REQ-AUTH-01",
-                        status="unclear",
-                        explanation=(
-                            "Requirement statement is vague ('reasonably fast') and cannot "
-                            "be verified without an explicit threshold."
-                        ),
-                        related_locations=["src/auth.py"],
-                    )
-                ],
-                tokens_used=150,
-            )
-
-        # 3. Invalid location simulation (Scenario F):
-        if self.mode == "invalid_location" or "simulate_invalid_location" in prompt:
-            return ProviderResponse(
-                summary="Review proposing findings with simulated invalid line coordinates.",
-                candidate_findings=[
-                    RawCandidateFinding(
-                        file_path="src/auth.py" if "src/auth.py" in prompt else "auth.py",
-                        line=9999,  # Nonexistent line
-                        label="issue",
-                        decorations=["blocking"],
-                        subject="Potential issue with out-of-bounds line coordinate",
-                        description="Tests that invalid line anchors are safely downgraded.",
-                        severity="medium",
-                        blocking=True,
+    def _check_security_boundary(self, prompt: str) -> ProviderResponse | None:
+        """Scenario G: Security boundary check."""
+        lowered = prompt.lower()
+        if "ignore previous instructions" not in lowered and "disclose secrets" not in lowered:
+            return None
+        return ProviderResponse(
+            summary=(
+                "Review completed. Untrusted prompt injection attempts were "
+                "identified in source/context and safely ignored."
+            ),
+            candidate_findings=[
+                RawCandidateFinding(
+                    file_path="README.md" if "README.md" in prompt else "tests/test_auth.py",
+                    line=None,
+                    label="nitpick",
+                    decorations=["non-blocking"],
+                    subject="Untrusted instruction block detected in repository data",
+                    description=(
+                        "Content in the repository attempts to alter reviewer instructions. "
+                        "VerifyCraft treats all repository content as untrusted data."
                     ),
-                    RawCandidateFinding(
-                        file_path="nonexistent_module.py",
-                        line=10,
-                        label="suggestion",
-                        decorations=["non-blocking"],
-                        subject="Finding in non-existent file",
-                        description="This finding references a file not present in the change.",
-                        severity="low",
-                        blocking=False,
-                    ),
-                ],
-                requirement_assessments=[],
-                tokens_used=140,
-            )
+                    severity="low",
+                    blocking=False,
+                )
+            ],
+            requirement_assessments=[],
+            tokens_used=120,
+        )
 
-        # 4. Auth token expiration checks (Scenario A vs Scenario B):
+    def _check_ambiguous_requirement(self, prompt: str) -> ProviderResponse | None:
+        """Scenario E: Ambiguous requirement check."""
+        if "reasonably fast" not in prompt.lower() and "ambiguous" not in prompt.lower():
+            return None
+        return ProviderResponse(
+            summary=(
+                "Review completed with clarification questions regarding "
+                "vague requirement statements."
+            ),
+            candidate_findings=[
+                RawCandidateFinding(
+                    file_path=_resolve_auth_path(prompt),
+                    line=None,
+                    label="question",
+                    decorations=["non-blocking"],
+                    subject="Ambiguous token expiration timeframe",
+                    description=(
+                        "Requirement specifies tokens should expire 'reasonably fast' "
+                        "without an exact TTL in minutes/seconds."
+                    ),
+                    severity="info",
+                    blocking=False,
+                    requirement_ids=["REQ-01"] if "REQ-01" in prompt else [],
+                    suggested_action="Define explicit numeric TTL in specification.",
+                )
+            ],
+            requirement_assessments=[
+                RawRequirementAssessment(
+                    requirement_id="REQ-01" if "REQ-01" in prompt else "REQ-AUTH-01",
+                    status="unclear",
+                    explanation=(
+                        "Requirement statement is vague ('reasonably fast') and cannot "
+                        "be verified without an explicit threshold."
+                    ),
+                    related_locations=[_AUTH_PATH],
+                )
+            ],
+            tokens_used=150,
+        )
+
+    def _check_invalid_location(self, prompt: str) -> ProviderResponse | None:
+        """Scenario F: Invalid location simulation."""
+        if self.mode != "invalid_location" and "simulate_invalid_location" not in prompt:
+            return None
+        return ProviderResponse(
+            summary="Review proposing findings with simulated invalid line coordinates.",
+            candidate_findings=[
+                RawCandidateFinding(
+                    file_path=_resolve_auth_path(prompt),
+                    line=9999,  # Nonexistent line
+                    label="issue",
+                    decorations=["blocking"],
+                    subject="Potential issue with out-of-bounds line coordinate",
+                    description="Tests that invalid line anchors are safely downgraded.",
+                    severity="medium",
+                    blocking=True,
+                ),
+                RawCandidateFinding(
+                    file_path="nonexistent_module.py",
+                    line=10,
+                    label="suggestion",
+                    decorations=["non-blocking"],
+                    subject="Finding in non-existent file",
+                    description="This finding references a file not present in the change.",
+                    severity="low",
+                    blocking=False,
+                ),
+            ],
+            requirement_assessments=[],
+            tokens_used=140,
+        )
+
+    def _check_auth_expiration(self, prompt: str) -> ProviderResponse | None:
+        """Scenario A vs Scenario B: Auth token expiration checks."""
         has_expiration_req = (
             "expire after 15 minutes" in prompt.lower()
             or "expiration" in prompt.lower()
             or "req-auth-01" in prompt.lower()
         )
-        if has_expiration_req:
-            has_compensating_control = (
-                "check_token_expiration" in prompt
-                or "token.is_expired()" in prompt
-                or "validate_expiration" in prompt
-                or "expires_at < current_time" in prompt
-                or "is_expired" in prompt
-            )
+        if not has_expiration_req:
+            return None
 
-            if has_compensating_control:
-                # Scenario B: Compensating control present in helper! Do NOT emit false issue.
-                return ProviderResponse(
-                    summary=(
-                        "Authentication changes reviewed. Token expiration requirement "
-                        "REQ-AUTH-01 is satisfied via compensating logic in the helper module."
-                    ),
-                    candidate_findings=[],
-                    requirement_assessments=[
-                        RawRequirementAssessment(
-                            requirement_id="REQ-AUTH-01",
-                            status="appears_satisfied",
-                            explanation=(
-                                "Token expiration is enforced by the helper module "
-                                "before session creation."
-                            ),
-                            related_locations=[
-                                "src/auth_helper.py"
-                                if "src/auth_helper.py" in prompt
-                                else "auth_helper.py"
-                            ],
-                        )
-                    ],
-                    tokens_used=210,
-                )
-            else:
-                # Scenario A: Missing expiration! Emit issue (blocking) on changed line.
-                return ProviderResponse(
-                    summary=(
-                        "Review identified critical security issue: missing token expiration "
-                        "check required by specification."
-                    ),
-                    candidate_findings=[
-                        RawCandidateFinding(
-                            file_path="src/auth.py" if "src/auth.py" in prompt else "auth.py",
-                            line=2,
-                            label="issue",
-                            decorations=["blocking"],
-                            subject="Token expiration check is omitted in authentication handler",
-                            description=(
-                                "`authenticate_user()` grants session tokens without "
-                                "verifying token expiration timestamp."
-                            ),
-                            severity="critical",
-                            blocking=True,
-                            requirement_ids=["REQ-AUTH-01"],
-                            suggested_action=(
-                                "Verify `token.expires_at > current_time()` before issuing "
-                                "session; raise `TokenExpiredError` if expired."
-                            ),
-                        )
-                    ],
-                    requirement_assessments=[
-                        RawRequirementAssessment(
-                            requirement_id="REQ-AUTH-01",
-                            status="not_satisfied",
-                            explanation=(
-                                "Authentication handler creates sessions without verifying "
-                                "15-minute expiration timestamp."
-                            ),
-                            related_locations=["src/auth.py:2"],
-                        )
-                    ],
-                    tokens_used=230,
-                )
+        has_compensating_control = (
+            "check_token_expiration" in prompt
+            or "token.is_expired()" in prompt
+            or "validate_expiration" in prompt
+            or "expires_at < current_time" in prompt
+            or "is_expired" in prompt
+        )
 
-        # 5. Logic regression without requirements (Scenario C):
-        if (
-            "zero_division" in prompt.lower()
-            or "divide by zero" in prompt.lower()
-            or "defect" in prompt.lower()
-        ):
+        if has_compensating_control:
+            # Scenario B: Compensating control present in helper! Do NOT emit false issue.
             return ProviderResponse(
                 summary=(
-                    "Review identified an unhandled edge case leading to runtime division by zero."
+                    "Authentication changes reviewed. Token expiration requirement "
+                    "REQ-AUTH-01 is satisfied via compensating logic in the helper module."
                 ),
-                candidate_findings=[
-                    RawCandidateFinding(
-                        file_path="src/calculator.py"
-                        if "src/calculator.py" in prompt
-                        else "calculator.py",
-                        line=10,
-                        label="issue",
-                        decorations=["blocking"],
-                        subject="Unhandled ZeroDivisionError when denominator is zero",
-                        description=(
-                            "`calculate_ratio()` divides numerator by denominator "
-                            "without checking if denominator is zero."
+                candidate_findings=[],
+                requirement_assessments=[
+                    RawRequirementAssessment(
+                        requirement_id="REQ-AUTH-01",
+                        status="appears_satisfied",
+                        explanation=(
+                            "Token expiration is enforced by the helper module "
+                            "before session creation."
                         ),
-                        severity="high",
-                        blocking=True,
-                        suggested_action=(
-                            "Add `if denominator == 0: raise ValueError('Cannot divide by zero')`."
-                        ),
+                        related_locations=[
+                            "src/auth_helper.py"
+                            if "src/auth_helper.py" in prompt
+                            else "auth_helper.py"
+                        ],
                     )
                 ],
-                requirement_assessments=[],
-                tokens_used=180,
+                tokens_used=210,
             )
 
-        # 6. Clean change (Scenario D):
+        # Scenario A: Missing expiration! Emit issue (blocking) on changed line.
+        return ProviderResponse(
+            summary=(
+                "Review identified critical security issue: missing token expiration "
+                "check required by specification."
+            ),
+            candidate_findings=[
+                RawCandidateFinding(
+                    file_path=_resolve_auth_path(prompt),
+                    line=2,
+                    label="issue",
+                    decorations=["blocking"],
+                    subject="Token expiration check is omitted in authentication handler",
+                    description=(
+                        "`authenticate_user()` grants session tokens without "
+                        "verifying token expiration timestamp."
+                    ),
+                    severity="critical",
+                    blocking=True,
+                    requirement_ids=["REQ-AUTH-01"],
+                    suggested_action=(
+                        "Verify `token.expires_at > current_time()` before issuing "
+                        "session; raise `TokenExpiredError` if expired."
+                    ),
+                )
+            ],
+            requirement_assessments=[
+                RawRequirementAssessment(
+                    requirement_id="REQ-AUTH-01",
+                    status="not_satisfied",
+                    explanation=(
+                        "Authentication handler creates sessions without verifying "
+                        "15-minute expiration timestamp."
+                    ),
+                    related_locations=[f"{_AUTH_PATH}:2"],
+                )
+            ],
+            tokens_used=230,
+        )
+
+    def _check_logic_regression(self, prompt: str) -> ProviderResponse | None:
+        """Scenario C: Logic regression without requirements."""
+        if (
+            "zero_division" not in prompt.lower()
+            and "divide by zero" not in prompt.lower()
+            and "defect" not in prompt.lower()
+        ):
+            return None
+        return ProviderResponse(
+            summary=(
+                "Review identified an unhandled edge case leading to runtime division by zero."
+            ),
+            candidate_findings=[
+                RawCandidateFinding(
+                    file_path="src/calculator.py"
+                    if "src/calculator.py" in prompt
+                    else "calculator.py",
+                    line=10,
+                    label="issue",
+                    decorations=["blocking"],
+                    subject="Unhandled ZeroDivisionError when denominator is zero",
+                    description=(
+                        "`calculate_ratio()` divides numerator by denominator "
+                        "without checking if denominator is zero."
+                    ),
+                    severity="high",
+                    blocking=True,
+                    suggested_action=(
+                        "Add `if denominator == 0: raise ValueError('Cannot divide by zero')`."
+                    ),
+                )
+            ],
+            requirement_assessments=[],
+            tokens_used=180,
+        )
+
+    def _default_clean_review(self) -> ProviderResponse:
+        """Scenario D: Clean change."""
         return ProviderResponse(
             summary=(
                 "Code changes reviewed. Implementation is clean, adheres to conventions, "
@@ -270,3 +284,24 @@ class DeterministicReviewerAdapter(ReviewerModelAdapter):
             requirement_assessments=[],
             tokens_used=110,
         )
+
+    def review(
+        self,
+        prompt: str,
+        system_instruction: str | None = None,
+        timeout_seconds: float = 60.0,
+    ) -> ProviderResponse:
+        """Inspect prompt content and requirements to deterministically evaluate scenarios."""
+        handlers = (
+            self._check_security_boundary,
+            self._check_ambiguous_requirement,
+            self._check_invalid_location,
+            self._check_auth_expiration,
+            self._check_logic_regression,
+        )
+        for handler in handlers:
+            response = handler(prompt)
+            if response is not None:
+                return response
+
+        return self._default_clean_review()

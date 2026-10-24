@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 from typing import Any
 
 from verifycraft.review.providers.base import (
@@ -146,8 +145,12 @@ class GeminiReviewerAdapter(ReviewerModelAdapter):
         clean = text.strip()
         # Strip markdown fences if present
         if clean.startswith("```"):
-            clean = re.sub(r"^```(?:json)?\s*", "", clean)
-            clean = re.sub(r"\s*```$", "", clean)
+            lines = clean.splitlines()
+            if lines and lines[0].startswith("```"):
+                lines = lines[1:]
+            if lines and lines[-1].strip() == "```":
+                lines = lines[:-1]
+            clean = "\n".join(lines).strip()
 
         try:
             data = json.loads(clean)

@@ -28,59 +28,61 @@ class RequirementsParser:
         re.compile(r"REQ-(\d+)[:\s]+(.*)", re.IGNORECASE),
     ]
 
+    def _match_explicit_id(
+        self, clean: str, idx: int, source_file: str | None
+    ) -> ParsedRequirement | None:
+        for pat in self.REQ_ID_PATTERNS:
+            m = pat.search(clean)
+            if m:
+                req_id = m.group(1).upper()
+                if not req_id.startswith("REQ"):
+                    req_id = f"REQ-{req_id}"
+                req_text = m.group(2).strip() or clean
+                return ParsedRequirement(
+                    id=req_id,
+                    text=req_text,
+                    source_file=source_file,
+                    line_number=idx,
+                )
+        return None
+
+    def _parse_requirement_line(
+        self, line: str, idx: int, source_file: str | None, counter: int
+    ) -> tuple[ParsedRequirement | None, int]:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("<!--"):
+            return None, counter
+
+        is_heading = stripped.startswith("#")
+        clean = re.sub(r"^(#+\s+|\-\s+|\*\s+|\d+\.\s+)", "", stripped).strip()
+        clean = re.sub(r"^\*\*(.*?)\*\*", r"\1", clean).strip()
+
+        explicit = self._match_explicit_id(clean, idx, source_file)
+        if explicit:
+            return explicit, counter
+
+        if not is_heading and re.search(
+            r"\b(must|shall|should|is required to)\b", clean, re.IGNORECASE
+        ):
+            req = ParsedRequirement(
+                id=f"REQ-{counter:02d}",
+                text=clean,
+                source_file=source_file,
+                line_number=idx,
+            )
+            return req, counter + 1
+
+        return None, counter
+
     def parse_text(self, text: str, source_file: str | None = None) -> list[ParsedRequirement]:
         """Parse requirements from raw text."""
         requirements: list[ParsedRequirement] = []
         counter = 1
 
-        lines = text.splitlines()
-        for idx, line in enumerate(lines, start=1):
-            stripped = line.strip()
-            if not stripped or stripped.startswith("<!--"):
-                continue
-
-            is_heading = stripped.startswith("#")
-
-            # Strip leading markdown list markers or headings
-            clean = re.sub(r"^(#+\s+|\-\s+|\*\s+|\d+\.\s+)", "", stripped).strip()
-            clean = re.sub(r"^\*\*(.*?)\*\*", r"\1", clean).strip()
-
-            matched = False
-            for pat in self.REQ_ID_PATTERNS:
-                m = pat.search(clean)
-                if m:
-                    req_id = m.group(1).upper()
-                    # Ensure prefix is clean
-                    if not req_id.startswith("REQ"):
-                        req_id = f"REQ-{req_id}"
-                    req_text = m.group(2).strip() or clean
-                    requirements.append(
-                        ParsedRequirement(
-                            id=req_id,
-                            text=req_text,
-                            source_file=source_file,
-                            line_number=idx,
-                        )
-                    )
-                    matched = True
-                    break
-
-            if (
-                not matched
-                and not is_heading
-                and re.search(r"\b(must|shall|should|is required to)\b", clean, re.IGNORECASE)
-            ):
-                # Auto-assign deterministic ID for explicit requirement sentences
-                req_id = f"REQ-{counter:02d}"
-                requirements.append(
-                    ParsedRequirement(
-                        id=req_id,
-                        text=clean,
-                        source_file=source_file,
-                        line_number=idx,
-                    )
-                )
-                counter += 1
+        for idx, line in enumerate(text.splitlines(), start=1):
+            req, counter = self._parse_requirement_line(line, idx, source_file, counter)
+            if req:
+                requirements.append(req)
 
         return requirements
 

@@ -19,9 +19,12 @@ from verifycraft.contracts.review import (
     ReviewStatus,
 )
 from verifycraft.review.counterexamples import CounterexampleChecker
-from verifycraft.review.git import GitContextCollector
+from verifycraft.review.git import GitContextCollector, GitReviewContext
 from verifycraft.review.providers.base import (
     ProviderConfigurationError,
+    ProviderResponse,
+    RawCandidateFinding,
+    RawRequirementAssessment,
     ReviewerModelAdapter,
 )
 from verifycraft.review.providers.deterministic import DeterministicReviewerAdapter
@@ -88,84 +91,12 @@ class ReviewEngine:
         )
 
         # 5. Process and Validate Candidate Findings
-        findings: list[ReviewFinding] = []
-        counter = 1
-
-        # Check candidate findings from provider response
-        for raw in provider_resp.candidate_findings:
-            validated_line, fallback_reason = collector.validate_line_anchor(
-                file_path=raw.file_path,
-                line=raw.line,
-                changed_files=context.changed_files,
-            )
-
-            # Skip findings in files that were never changed or present
-            if (
-                raw.file_path not in context.changed_files
-                and raw.file_path not in context.related_files
-            ):
-                context.omitted_scope.append(
-                    f"Candidate finding on unknown file '{raw.file_path}' was discarded."
-                )
-                continue
-
-            desc = raw.description
-            if fallback_reason:
-                desc = f"{desc}\n\n*(Note: {fallback_reason})*"
-
-            # Resolve label safely
-            try:
-                label = ConventionalLabel(raw.label.lower())
-            except ValueError:
-                label = ConventionalLabel.ISSUE
-
-            # Resolve severity safely
-            try:
-                severity = FindingSeverity(raw.severity.lower())
-            except ValueError:
-                severity = FindingSeverity.MEDIUM
-
-            findings.append(
-                ReviewFinding(
-                    id=f"rev-{counter:03d}",
-                    file_path=raw.file_path,
-                    line=validated_line,
-                    end_line=raw.end_line if validated_line is not None else None,
-                    label=label,
-                    decorations=raw.decorations,
-                    subject=raw.subject,
-                    description=desc,
-                    severity=severity,
-                    blocking=raw.blocking,
-                    requirement_ids=raw.requirement_ids,
-                    evidence_status=EvidenceStatus.MODEL_INFERRED,
-                    review_status=ReviewStatus.REPORTED,
-                    suggested_action=raw.suggested_action,
-                )
-            )
-            counter += 1
-
-        # Incorporate any candidate findings provided in the request
-        for cand in request.candidate_findings:
-            v_line, f_reason = collector.validate_line_anchor(
-                file_path=cand.file_path,
-                line=cand.line,
-                changed_files=context.changed_files,
-            )
-            desc = cand.description
-            if f_reason:
-                desc = f"{desc}\n\n*(Note: {f_reason})*"
-
-            findings.append(
-                cand.model_copy(
-                    update={
-                        "id": f"rev-{counter:03d}",
-                        "line": v_line,
-                        "description": desc,
-                    }
-                )
-            )
-            counter += 1
+        findings = self._process_candidate_findings(
+            provider_resp=provider_resp,
+            request=request,
+            context=context,
+            collector=collector,
+        )
 
         # 6. Apply Counterexample and Compensating Logic Validation
         findings, dismissal_notes = self.counterexample_checker.check_compensating_controls(
@@ -175,71 +106,15 @@ class ReviewEngine:
         context.omitted_scope.extend(dismissal_notes)
 
         # 7. Deduplicate Findings
-        deduped_findings: list[ReviewFinding] = []
-        seen_keys: set[str] = set()
-        for f in findings:
-            key = f"{f.file_path}:{f.line}:{f.label}:{f.subject}"
-            if key not in seen_keys:
-                seen_keys.add(key)
-                deduped_findings.append(f)
+        deduped_findings = self._deduplicate_findings(findings)
 
         # 8. Build Requirement Assessments
-        assessments: list[RequirementAssessment] = []
-        if parsed_reqs:
-            model_assessments_map = {
-                a.requirement_id.upper(): a for a in provider_resp.requirement_assessments
-            }
-            for req in parsed_reqs:
-                req_id_clean = req.id.upper()
-                if req_id_clean in model_assessments_map:
-                    raw_a = model_assessments_map[req_id_clean]
-                    try:
-                        status = RequirementStatus(raw_a.status.lower())
-                    except ValueError:
-                        status = RequirementStatus.UNCLEAR
-                    explanation = raw_a.explanation
-                else:
-                    # If compensating control dismissed the issue, check if it was this requirement
-                    if any(req.id in note for note in dismissal_notes):
-                        status = RequirementStatus.APPEARS_SATISFIED
-                        explanation = "Requirement satisfied via compensating controls in context."
-                    elif any(req.id in f.requirement_ids for f in deduped_findings):
-                        status = RequirementStatus.NOT_SATISFIED
-                        explanation = (
-                            "Defect or omission in changed code violates this requirement."
-                        )
-                    else:
-                        status = RequirementStatus.APPEARS_SATISFIED
-                        explanation = (
-                            "No requirement violations identified in changed implementation."
-                        )
-
-                assessments.append(
-                    RequirementAssessment(
-                        requirement_id=req.id,
-                        source_file=req.source_file,
-                        text=req.text,
-                        status=status,
-                        explanation=explanation,
-                        related_finding_ids=[
-                            f.id for f in deduped_findings if req.id in f.requirement_ids
-                        ],
-                    )
-                )
-        else:
-            # Requirements absent: mark coverage as not assessed
-            assessments.append(
-                RequirementAssessment(
-                    requirement_id="NONE",
-                    source_file=None,
-                    text="No requirement document supplied.",
-                    status=RequirementStatus.NOT_ASSESSED,
-                    explanation=(
-                        "No requirements document was supplied; "
-                        "standard code quality review was performed."
-                    ),
-                )
-            )
+        assessments = self._build_requirement_assessments(
+            parsed_reqs=parsed_reqs,
+            provider_resp=provider_resp,
+            deduped_findings=deduped_findings,
+            dismissal_notes=dismissal_notes,
+        )
 
         # 9. Compute Resource Usage
         wall_time = time.monotonic() - start_time
@@ -269,6 +144,177 @@ class ReviewEngine:
             resource_usage=resource_usage,
             model_info=model_info,
         )
+
+    def _create_finding_from_raw(
+        self,
+        raw: RawCandidateFinding,
+        counter: int,
+        context: GitReviewContext,
+        collector: GitContextCollector,
+    ) -> ReviewFinding | None:
+        validated_line, fallback_reason = collector.validate_line_anchor(
+            file_path=raw.file_path,
+            line=raw.line,
+            changed_files=context.changed_files,
+        )
+
+        if (
+            raw.file_path not in context.changed_files
+            and raw.file_path not in context.related_files
+        ):
+            context.omitted_scope.append(
+                f"Candidate finding on unknown file '{raw.file_path}' was discarded."
+            )
+            return None
+
+        desc = raw.description
+        if fallback_reason:
+            desc = f"{desc}\n\n*(Note: {fallback_reason})*"
+
+        try:
+            label = ConventionalLabel(raw.label.lower())
+        except ValueError:
+            label = ConventionalLabel.ISSUE
+
+        try:
+            severity = FindingSeverity(raw.severity.lower())
+        except ValueError:
+            severity = FindingSeverity.MEDIUM
+
+        return ReviewFinding(
+            id=f"rev-{counter:03d}",
+            file_path=raw.file_path,
+            line=validated_line,
+            end_line=raw.end_line if validated_line is not None else None,
+            label=label,
+            decorations=raw.decorations,
+            subject=raw.subject,
+            description=desc,
+            severity=severity,
+            blocking=raw.blocking,
+            requirement_ids=raw.requirement_ids,
+            evidence_status=EvidenceStatus.MODEL_INFERRED,
+            review_status=ReviewStatus.REPORTED,
+            suggested_action=raw.suggested_action,
+        )
+
+    def _process_candidate_findings(
+        self,
+        provider_resp: ProviderResponse,
+        request: ReviewRequest,
+        context: GitReviewContext,
+        collector: GitContextCollector,
+    ) -> list[ReviewFinding]:
+        findings: list[ReviewFinding] = []
+        counter = 1
+
+        for raw in provider_resp.candidate_findings:
+            f = self._create_finding_from_raw(raw, counter, context, collector)
+            if f is not None:
+                findings.append(f)
+                counter += 1
+
+        for cand in request.candidate_findings:
+            v_line, f_reason = collector.validate_line_anchor(
+                file_path=cand.file_path,
+                line=cand.line,
+                changed_files=context.changed_files,
+            )
+            desc = cand.description
+            if f_reason:
+                desc = f"{desc}\n\n*(Note: {f_reason})*"
+
+            findings.append(
+                cand.model_copy(
+                    update={
+                        "id": f"rev-{counter:03d}",
+                        "line": v_line,
+                        "description": desc,
+                    }
+                )
+            )
+            counter += 1
+
+        return findings
+
+    def _deduplicate_findings(self, findings: list[ReviewFinding]) -> list[ReviewFinding]:
+        deduped: list[ReviewFinding] = []
+        seen_keys: set[str] = set()
+        for f in findings:
+            key = f"{f.file_path}:{f.line}:{f.label}:{f.subject}"
+            if key not in seen_keys:
+                seen_keys.add(key)
+                deduped.append(f)
+        return deduped
+
+    def _assess_single_requirement(
+        self,
+        req: ParsedRequirement,
+        model_assessments_map: dict[str, RawRequirementAssessment],
+        deduped_findings: list[ReviewFinding],
+        dismissal_notes: list[str],
+    ) -> RequirementAssessment:
+        req_id_clean = req.id.upper()
+        if req_id_clean in model_assessments_map:
+            raw_a = model_assessments_map[req_id_clean]
+            try:
+                status = RequirementStatus(raw_a.status.lower())
+            except ValueError:
+                status = RequirementStatus.UNCLEAR
+            explanation = raw_a.explanation
+        elif any(req.id in note for note in dismissal_notes):
+            status = RequirementStatus.APPEARS_SATISFIED
+            explanation = "Requirement satisfied via compensating controls in context."
+        elif any(req.id in f.requirement_ids for f in deduped_findings):
+            status = RequirementStatus.NOT_SATISFIED
+            explanation = "Defect or omission in changed code violates this requirement."
+        else:
+            status = RequirementStatus.APPEARS_SATISFIED
+            explanation = "No requirement violations identified in changed implementation."
+
+        return RequirementAssessment(
+            requirement_id=req.id,
+            source_file=req.source_file,
+            text=req.text,
+            status=status,
+            explanation=explanation,
+            related_finding_ids=[f.id for f in deduped_findings if req.id in f.requirement_ids],
+        )
+
+    def _build_requirement_assessments(
+        self,
+        parsed_reqs: list[ParsedRequirement],
+        provider_resp: ProviderResponse,
+        deduped_findings: list[ReviewFinding],
+        dismissal_notes: list[str],
+    ) -> list[RequirementAssessment]:
+        if not parsed_reqs:
+            return [
+                RequirementAssessment(
+                    requirement_id="NONE",
+                    source_file=None,
+                    text="No requirement document supplied.",
+                    status=RequirementStatus.NOT_ASSESSED,
+                    explanation=(
+                        "No requirements document was supplied; "
+                        "standard code quality review was performed."
+                    ),
+                    related_finding_ids=[],
+                )
+            ]
+
+        model_assessments_map = {
+            a.requirement_id.upper(): a for a in provider_resp.requirement_assessments
+        }
+        return [
+            self._assess_single_requirement(
+                req=req,
+                model_assessments_map=model_assessments_map,
+                deduped_findings=deduped_findings,
+                dismissal_notes=dismissal_notes,
+            )
+            for req in parsed_reqs
+        ]
 
     def _build_prompt(
         self,
