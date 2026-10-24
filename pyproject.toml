@@ -97,3 +97,12 @@ python_version = "3.11"
 strict = true
 warn_unused_configs = true
 files = ["src", "tests"]
+
+[[tool.mypy.overrides]]
+module = [
+    "google",
+    "google.genai",
+    "google.genai.*",
+]
+ignore_missing_imports = true
+
