@@ -1,6 +1,6 @@
 # VerifyCraft
 
-> **Composable review, testing, and verification capabilities for AI agents.**
+> **Evidence-aware code review engine evaluating changes against context and explicit requirements to produce actionable Conventional Comments.**
 
 [![Version](https://img.shields.io/github/v/release/apply-the/verifycraft?color=blue&label=version)](https://github.com/apply-the/verifycraft/releases)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
@@ -13,35 +13,37 @@
 [![Security Rating](https://sonarcloud.io/api/project_badges/measure?project=apply-the_verifycraft&metric=security_rating)](https://sonarcloud.io/summary/new_code?id=apply-the_verifycraft)
 [![Reliability Rating](https://sonarcloud.io/api/project_badges/measure?project=apply-the_verifycraft&metric=reliability_rating)](https://sonarcloud.io/summary/new_code?id=apply-the_verifycraft)
 
-VerifyCraft is a Python-first, framework-agnostic collection of focused capabilities designed to make AI-assisted software engineering **more verifiable without requiring developers to adopt a new agent framework**.
+VerifyCraft is a Python-first, model-agnostic code review engine designed to evaluate code changes, context, and explicit requirements, producing actionable [Conventional Comments](https://conventionalcomments.org/) and versioned machine-readable reports.
 
-Each capability is designed to be useful **standalone** (via CLI and Python SDK) and **embedded** (such as inside a LangGraph workflow or GitHub Actions automation). VerifyCraft turns plausible LLM claims into **explicit, inspectable findings backed by reproducible evidence**.
+The existing verification engine remains an independent, first-class capability for validating testable hypotheses against empirical test evidence. However, test execution is an evidence source rather than the definition of the entire product. VerifyCraft works **standalone** (via CLI and Python SDK) and can be **embedded** into host coding agents (e.g., Copilot, Claude Code) or CI/CD pipelines without requiring a new agent framework or forcing a secondary mandatory LLM.
 
 ---
 
-## What VerifyCraft Does Today
+## What VerifyCraft Does Today (`v0.1.0`)
 
-In version `0.1.0`, VerifyCraft delivers the core verification engine (Stage 1 / Stage 2 vertical slice):
+In version `0.1.0`, VerifyCraft delivers the foundational, independent **deterministic verification engine primitive**:
 
 - **Deterministic Hypothesis Verification**: Evaluates structured regression claims against approved test targets (e.g. `pytest`).
-- **Fail-Closed Verification Scope**: Resolves code context and fingerprints up to 500 relevant repository files, failing closed if limits are exceeded.
+- **Fail-Closed Verification Scope**: Resolves code context and fingerprints up to 500 relevant repository files with SHA-256 state tracking, failing closed if limits are exceeded.
 - **Root-Level Module Tracking**: Tracks root-level Python modules and configurations (`*.py`, `pyproject.toml`, `setup.cfg`) alongside `src/` and `tests/` directories.
 - **Categorized Verdicts**: Returns explicit outcome semantics: `supported`, `refuted`, `inconclusive`, or `blocked`.
 - **Hardened Provenance Protection**: Disables caller-provided cached execution evidence as authoritative unless verified by an independent provenance authenticator.
 - **Strict Execution Policies**: Rejects untrusted code under local execution and enforces timeouts, command restrictions, and advisory limits.
-- **Parity Between CLI and SDK**: Shares identical schemas, policies, and engine logic between terminal invocations and Python imports.
+- **Parity Between CLI and SDK**: Shares identical schemas, policies, and engine logic between terminal invocations (`verifycraft verify`) and Python imports (`VerificationEngine`).
+
+> [!NOTE]
+> Version `0.1.0` implements the verification engine primitive. It **does not** yet include autonomous git diff review, requirements document parsing, Conventional Comments generation, or LLM integrations. Those capabilities are the primary focus of the `v0.2.0` milestone.
 
 ---
 
-## What is Planned but Not Yet Implemented
+## Planned Roadmap
 
-VerifyCraft is developing in sequential outcome-based stages (see [ROADMAP.md](docs/ROADMAP.md)):
+VerifyCraft is evolving through focused, outcome-driven milestones (see [ROADMAP.md](docs/ROADMAP.md)):
 
-- ⏳ **LangGraph Adapter (Stage 3)**: Embedding capabilities directly as graph nodes without making LangGraph a mandatory core dependency.
-- ⏳ **GitHub Action (Stage 3)**: Automated pull request review bot running bounded analysis in CI/CD.
-- ⏳ **Composable Review & Test Capabilities (Stage 4)**: Independent `review` (candidate finding generation) and `test` (targeted test proposing).
-- ⏳ **Containerized Isolation (Stage 4/5)**: True kernel sandbox/container execution boundary for untrusted code execution.
-- ⏳ **Multi-Language Support (Stage 5)**: Expanding verification targets beyond Python/pytest.
+- 🎯 **`v0.2.0`: Review-First Vertical Slice (Next Milestone)**: End-to-end review of diffs and context against optional requirements, producing actionable Conventional Comments and JSON through CLI and Python SDK; supports both configured model providers and host-agent candidate finding ingestion without a mandatory second model.
+- ⏳ **`v0.3.0`: Context, Traceability & PR-Ready Review**: Multi-file repository context selection, structured requirements traceability, and deduplication.
+- ⏳ **`v0.4.0`: Isolated Verification & Sandbox Boundaries**: Containerized sandbox isolation for safe untrusted code execution, targeted test generation, and hypothesis synthesis.
+- ⏳ **`v0.5.0`: Ecosystem & Integrations**: LangGraph adapter, GitHub Actions PR-review bot, and multi-language verification backends.
 
 ---
 
@@ -213,7 +215,7 @@ VerifyCraft uses deterministic exit codes to communicate verification verdicts i
 1. **Fail-Closed Verification Scope**:
    Verification scope resolution enforces a hard limit of **500 relevant repository files**. If a repository or target scope exceeds 500 files, the engine raises a `FingerprintError` and refuses to produce a partial or misleading fingerprint.
 2. **Advisory Network Policy**:
-   In `trusted_local` mode, setting `allow_network=False` indicates the intended constraint. Because `trusted_local` runs on the local host without kernel namespace isolation, it does not construct an OS firewall boundary. Full containerized isolation is scheduled for Stage 4/5.
+   In `trusted_local` mode, setting `allow_network=False` indicates the intended constraint. Because `trusted_local` runs on the local host without kernel namespace isolation, it does not construct an OS firewall boundary. Full containerized isolation is scheduled for future container sandboxing (`v0.4.0`).
 3. **Untrusted Code Rejection**:
    Running with `untrusted_code=True` in `trusted_local` mode is blocked by default (`Verdict.BLOCKED` / `PolicyViolationError`). Untrusted code must never execute on a bare host.
 4. **Independent Provenance Authentication for Cached Evidence**:
@@ -237,7 +239,7 @@ pytest --cov=verifycraft
 
 ## How to Reproduce Benchmarks
 
-VerifyCraft includes reproducible benchmark comparisons against prompt-only LLM reviewer baselines across 5 canonical scenarios:
+VerifyCraft includes reproducible benchmark comparisons against a deterministic keyword-heuristic baseline across 5 canonical scenarios (comparisons against real LLM review baselines are scheduled for `v0.2.0`):
 
 ```bash
 # Run benchmark evaluation with human-readable summary
@@ -265,7 +267,7 @@ For full release procedures and configuration instructions, see [RELEASING.md](d
 ## Documentation
 
 - 📘 **[Architecture & Foundations (`docs/FOUNDATIONS.md`)](docs/FOUNDATIONS.md)**: Architectural principles, contracts, and safety boundaries.
-- 🗺️ **[Roadmap & Delivery Sequence (`docs/ROADMAP.md`)](docs/ROADMAP.md)**: Outcome-based milestone sequence (Stages 0–5).
+- 🗺️ **[Roadmap & Delivery Sequence (`docs/ROADMAP.md`)](docs/ROADMAP.md)**: Outcome-based milestone sequence (`v0.1.0` to `v0.5.0`).
 - 🚀 **[Release Guide (`docs/RELEASING.md`)](docs/RELEASING.md)**: Versioning, PyPI Trusted Publishing, and release checklists.
 - 🤝 **[Contributing Guidelines (`CONTRIBUTING.md`)](CONTRIBUTING.md)**: Code conventions, branch patterns, and development setup.
 

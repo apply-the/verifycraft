@@ -1,190 +1,219 @@
 # VerifyCraft: Roadmap
 
-> **Working name:** VerifyCraft  
-> **Proposed repository:** `apply-the/verifycraft`  
-> **Planning approach:** Outcome-based milestones, not fixed release dates.  
-> **Goal:** Prove that an independent verification capability adds measurable value before expanding into an ecosystem.
+> **Repository:** [`apply-the/verifycraft`](https://github.com/apply-the/verifycraft)  
+> **Status:** Proposed review-first roadmap following the published `v0.1.0`  
+> **Strategy:** Deliver a useful requirements-aware code review before investing in broad integrations.  
+> **Release policy:** Milestones are outcome gates, not committed dates; versions after `v0.1.0` are **proposed targets**.
 
-## 1. Where we are going
+## 1. North star: actionable, requirements-aware code review
 
-Build one reusable, Python-first capability engine, exposed both directly and through integrations:
+VerifyCraft should answer: **“What is wrong with this implementation, which requirements are not met, and what has actually been verified?”**
 
-![VerifyCraft architecture with original Box, Terminal, Code 2, Workflow, and Git Pull Request icon concepts](assets/architecture.svg)
+The product receives a Git diff or explicit revision pair, optional requirement documents and review policy, and either an explicitly configured model provider **or** candidate findings supplied by an existing coding agent. It reviews implementation and context, evaluates requirement coverage, validates and prioritizes findings, optionally gathers evidence, and returns **Conventional Comments**, an actionable summary, and **versioned JSON**.
 
 **Core promise:** **Model-agnostic · Typed contracts · Bounded execution · Verifiable results**.
 
-The end-state includes a **CLI** for developers and CI/CD, a **Python SDK** for custom AI agents, a **LangGraph Adapter** for agent workflows, and a **GitHub Action** for automated PR review. These are interfaces to the same engine, **not independent reimplementations**.
+![VerifyCraft distribution surfaces](assets/architecture.svg)
 
-Read [FOUNDATIONS.md](FOUNDATIONS.md) for principles, safety boundaries, and proposed data contracts.
+The existing diagram illustrates the CLI, Python SDK, LangGraph and GitHub Action surfaces. These remain relevant, but the **product center is code review**, supported by the verification primitive. Update the graphic later to reflect that internal distinction while retaining its icon language.
 
-## 2. Delivery sequence
+## 2. Baseline: what `v0.1.0` shipped
 
-| Stage | Outcome | Exit criteria |
-| --- | --- | --- |
-| **0. Frame and benchmark** | A falsifiable first use case | Golden PR dataset; simple LLM baseline; preliminary metrics and resource budget. |
-| **1. Verification vertical slice** | End-to-end PR regression evidence | Python/pytest workflow verifies or rejects bounded hypotheses and returns structured, reviewable results. |
-| **2. Public core: SDK + CLI** | Usable standalone component | Stable v0 contracts, installation, CLI/SDK parity, examples, CI, clear failure modes. |
-| **3. Embeddable adapters** | Broad distribution | Optional LangGraph adapter and GitHub Action reuse the same package and policies. |
-| **4. Specialized capabilities** | Composable review and testing modules | Independent `review` and `test` APIs, shared evidence semantics, measurable value from composition. |
-| **5. Hardening and ecosystem** | Trusted OSS building block | Multi-repo benchmarks, compatibility policy, observability, docs, contributor experience. |
+**Released:** [`v0.1.0`](https://github.com/apply-the/verifycraft/releases/tag/v0.1.0).
 
-Stages are **sequential gates**, not promises about calendar dates. A failed gate should trigger scope reduction or redesign rather than automatic expansion.
+Implemented: Python package, `VerificationEngine.verify`, `verifycraft verify`, explicit hypotheses/checks, a trusted-local pytest runner, bounded fingerprinting, policy checks, typed evidence and the four verification verdicts (`supported`, `refuted`, `inconclusive`, `blocked`). It is useful as a programmatically callable verification primitive.
 
-## 3. Stage 0: Define the test of value
+**Not shipped:** end-to-end semantic code review, branch comparison, candidate defect discovery, requirements mapping, Conventional Comments, real-agent integrations, a GitHub PR-review Action, production isolation for untrusted code, or a benchmark proving code-review superiority.
 
-**Objective:** Determine whether evidence-driven verification can outperform a basic prompt-based code review on a narrow, reproducible task.
+**Benchmark clarification:** The five canonical fixtures validate verification-contract invariants. The purported LLM baseline is a keyword heuristic, **not a real model call**. Do not use that comparison as a code-review quality claim.
 
-**Build:**
+**Product correction:** `v0.1.0` should not be retroactively called a complete code-review milestone. Keep the release unchanged; fix forward through documentation and new functionality.
 
-- Select **Python + pytest** and pull-request regressions as the initial target.
-- Assemble a small, versioned set of known-good and known-buggy changes; preserve expected outcomes.
-- Implement a minimal baseline: a single LLM reviewer that receives the same diff/context budget and emits candidate findings without execution-based verification.
-- Define metric collection and a fixed evaluation protocol, including how ambiguous findings are adjudicated.
-- Fix safety and cost ceilings for local execution and CI experiments.
+## 3. Revised delivery sequence
 
-**Deliverables:** `benchmarks/`, dataset documentation, baseline runner, metric definitions, first architecture decision records.
-
-**Exit gate:** The benchmark can be rerun by another developer and supports apples-to-apples comparisons.
-
-## 4. Stage 1: Implement the first real capability
-
-**Objective:** Turn a proposed regression into an explicit evidence-backed outcome.
-
-**Vertical slice:**
-
-1. Read the repository revision and PR diff.
-2. Gather a bounded amount of relevant code context.
-3. Generate a small number of hypotheses or accept externally supplied hypotheses.
-4. Select an **approved** pytest/static check and its expected observation.
-5. Execute with fixed timeouts, attempt limits, file-system restrictions, and isolated workspace.
-6. Record evidence with revision fingerprints, output, provenance, and resource usage.
-7. Return `supported`, `refuted`, `inconclusive`, or `blocked` for each claim.
-
-**Deliverables:** typed contracts; evidence capture; execution policy; Python/pytest check adapter; structured JSON result; end-to-end fixtures.
-
-**Exit gate:** On the golden dataset, the engine handles proof, failed proof, stale evidence, timeout, denied command, and exhausted budget without misrepresenting uncertainty or silently retrying.
-
-**Important:** If safe execution requires a container, enforce it before running untrusted pull-request code. A model-proposed shell command is **never** sufficient authorization.
-
-## 5. Stage 2: Release the first usable product
-
-**Objective:** Make the vertical slice directly adoptable without an agent framework.
-
-**Ship together:**
-
-- Python SDK for direct and agent-embedded calls.
-- CLI commands for reviewing/verifying a diff and exporting JSON.
-- Configuration for provider adapters and resource limits.
-- JSON Schema/version compatibility rules, documented verdict semantics.
-- Local installation guide, quickstart, and complete example repository.
-- Unit, contract, integration, packaging, and security CI checks.
-
-**Exit gate:** A new developer can install the package, run a documented example, inspect evidence, and integrate the SDK with no Boundline, Canon, LangGraph, or custom service required.
-
-**Release candidate:** `0.1.0` **only when** Stage 2 gates pass. Version is a target, not a schedule.
-
-## 6. Stage 3: Add distribution adapters
-
-**Objective:** Make the same capability available where developers already work.
-
-**LangGraph Adapter**
-
-- A thin node/adapter consuming and producing typed/JSON-serializable data.
-- Optional dependency and an integration test with an example graph.
-- No duplicated retry, evidence, or budget logic inside the adapter.
-
-**GitHub Action**
-
-- Runs on PR diffs with minimal required permissions.
-- Emits JSON artifact and a concise check summary; PR comments are optional and policy-controlled.
-- Handles forked/untrusted PRs safely and never exposes credentials to the code under test.
-- Reuses the SDK and the same verdict semantics.
-
-**Exit gate:** Equivalent fixtures yield semantically identical findings through CLI, SDK, LangGraph, and GitHub Action. Any environment-specific limitation is clearly indicated.
-
-## 7. Stage 4: Expand only through standalone capabilities
-
-**Proposed capability contracts:**
-
-| Capability | Primary input | Primary output | Composition |
+| Milestone | Outcome | Status | Exit gate |
 | --- | --- | --- | --- |
-| **`verify`** | A testable claim and allowed checks | Evidence and verdict | Foundational reusable primitive. |
-| **`review`** | Diff, context, policy | Candidate findings/hypotheses | `review + verify`: evidence-aware code review. |
-| **`test`** | Target, expected behavior, policy | Candidate tests, execution evidence | `test + verify`: generated tests with verified outcomes. |
-| **`challenge`** (optional) | Finding and evidence | Counterexamples and disputed assumptions | `review + challenge + verify`: false-positive reduction. |
-| **`context`** (optional) | Repository, question, budget | Traceable context selection | Improve review quality and cost. |
-| **`govern`** (optional) | Policy and proposed action | Allow/deny/approval decision | Explicit gates, not a replacement agent runtime. |
+| **`v0.1.0`: Verification primitive** | Caller-supplied hypothesis + pytest check -> typed evidence/verdict, CLI and SDK | **Released** | Published artifact and deterministic contract tests. Does not establish review value. |
+| **`v0.2.0`: Review-first vertical slice** | Diff + context + optional requirements -> useful findings, Conventional Comments, JSON through CLI and SDK | **Next, proposed** | End-to-end review works on known real changes, with correctly located comments and honest evidence/uncertainty. |
+| **`v0.3.0`: Evidence-aware review** | Link review findings to safe targeted verification and reliable check selection | **Proposed** | Clear, reproducible association between reviewed claims and trusted source/static/test evidence. |
+| **`v0.4.0`: Coding-agent distribution** | Claude Code/Copilot-friendly tool surface, optionally MCP | **Proposed** | Existing agent can review and verify without a second mandatory LLM, through the same SDK contracts. |
+| **`v0.5.0`: PR automation and ecosystem** | GitHub Action, optional LangGraph adapter, stronger empirical benchmark | **Proposed** | Safe, actionable PR review with stable contracts and measured usefulness. |
 
-**Rule:** Every new capability must work alone and justify its inclusion through a measured improvement. Do not ship the table as six empty packages.
+Do not advance a milestone merely because code exists. Failure to achieve useful results is a reason to narrow scope, revise the design, or stop.
 
-**Exit gate:** At least two capabilities can be used independently **and** together, without hidden shared-state requirements or mandatory orchestration.
+## 4. `v0.2.0`: Build the first actual review product
 
-## 8. Stage 5: Measure, stabilize, and enable contributions
+### User story
 
-**Benchmark across multiple projects** (initially Python repositories):
+A developer requests a review of `main...feature/auth`, supplies an auth specification (optionally), and gets a concise review containing code-specific issues, requirements coverage, questions, and actionable Conventional Comments. A second user can call the same capability programmatically, supplying either a model provider or candidates from a coding agent.
 
-- **Finding precision:** how many reported issues are real and relevant.
-- **Verified-finding yield / recall proxy:** how many known benchmark regressions receive a correct, evidence-backed outcome.
-- **False-positive rate:** erroneous actionable claims, tracked separately from inconclusive/blocked findings.
-- **Verification completion rate:** share of hypotheses that reach a supported or refuted verdict under the budget.
-- **Cost and latency:** time, tool calls, model tokens, and estimated spend per PR / per validated finding.
-- **Staleness and reproducibility:** whether results correctly invalidate after a revision change and can be inspected later.
-
-**Deliverables:** comparison reports, fixtures, reproducible CI benchmark jobs, API compatibility statement, contribution guide, security policy, and release automation.
-
-**Exit gate:** The benchmark demonstrates a useful trade-off over the baseline, with failure cases and limitations published rather than hidden.
-
-## 9. Explicit prioritization
-
-| Do first | Do after validation | Avoid until there is evidence |
-| --- | --- | --- |
-| Python + pytest | TypeScript/JavaScript | Universal language support |
-| One repo / one core | More execution backends | Plugin marketplace |
-| Verify candidate regressions | Richer automated code review | Multi-agent council by default |
-| Typed verdicts and provenance | Mutation testing | Long-running agent sessions |
-| Safe bounded checks | Optional hosted provider integrations | SaaS dashboard / billing |
-| SDK + CLI | LangGraph + GitHub Action | Custom workflow/orchestration engine |
-
-The stage sequence remains authoritative: **do not build optional adapters before the core use case is reliable**, even though the interfaces are part of the overall product design.
-
-## 10. Known risks and mitigations
-
-| Risk | Mitigation |
-| --- | --- |
-| Recreating a large agent platform | Enforce small APIs, narrow capability ownership, and no mandatory persistent runtime. |
-| False confidence from LLM reasoning | Separate candidate findings from evidence verdicts; include explicit inconclusive states. |
-| Security exposure while running PR code | Isolated execution, least privilege, restrictions on network/secrets and tool allowlists. |
-| High per-PR cost or latency | Budget limits, contextual relevance filters, early stopping, low-cost baselines. |
-| Benchmarks tailored to the product | Freeze datasets, publish selection criteria, include independent repositories. |
-| Low adoption despite technical quality | Ship usable SDK and CLI early, excellent examples, minimal install friction. |
-| Python performance concerns | Measure real bottlenecks; optimize or use Rust only for proven hot paths. |
-
-## 11. First backlog, in suggested order
-
-- [ ] Create the repository and select the final package name after availability checks.
-- [ ] Publish foundations, roadmap, and the shared architecture diagram.
-- [ ] Write a one-page specification for the initial Python/pytest PR-regression scenario.
-- [ ] Assemble the first benchmark fixture set with ground truth.
-- [ ] Create a simple reviewer baseline and metrics script.
-- [ ] Define v0 typed contracts and evidence/verdict invariants.
-- [ ] Implement repository/diff fingerprinting and context limits.
-- [ ] Implement one approved verification check backend with safe execution.
-- [ ] Produce an end-to-end JSON report and test the negative/error paths.
-- [ ] Add SDK and CLI examples that produce equivalent output.
-- [ ] Compare results against the baseline before adding more capabilities.
-
-## 12. First public demo
-
-A developer checks out a Python repository and invokes a conceptual command:
+Proposed CLI, **not implemented in `v0.1.0`**:
 
 ```bash
-verifycraft review . --base origin/main --verify --format json
+verifycraft review . \
+  --base main \
+  --head feature/auth \
+  --requirements docs/auth-requirements.md \
+  --format markdown
 ```
 
-VerifyCraft returns candidate regression findings, checks executed under the configured policy, supporting or contradictory evidence, and clear uncertainty and budget states. **No general-purpose framework setup is required.**
+Proposed SDK shape, **not implemented in `v0.1.0`**:
 
-The specific CLI flags, model provider, and JSON schema are design proposals until implemented.
+```python
+review = ReviewEngine(provider=my_provider).review(
+    repository=".",
+    base_ref="main",
+    head_ref="feature/auth",
+    requirements=["docs/auth-requirements.md"],
+)
+print(review.to_conventional_comments())
+```
 
----
+### Workstream A: Change understanding and bounded context
 
-**Success means:** developers can use VerifyCraft immediately, agent builders can embed it without adopting a framework, and the evidence makes results meaningfully more trustworthy than an unsupported LLM assertion. **Not** that the system produces the largest number of findings or runs the most agents.
+- Resolve actual base/head Git SHAs and obtain diff plus changed-line maps. Support path filters, renamed files, deletions and a bounded context budget. A supplied patch may be supported as an alternative input with appropriately weaker provenance.
+- Read surrounding code, relevant interfaces/call sites and tests; record sources, exclusions, truncated data and line locations.
+- Choose a small initial target such as **Python code changes** for high-quality review; keep abstractions free of a permanent Python-only assumption. A semantic review can inspect other languages later, but must declare capability limitations.
+- Preserve diff-to-file coordinates for Conventional Comments; invalid anchors should fall back to a summary-level comment, never an invented line.
+
+**Acceptance:** A change with multiple files and at least one rename has correct base/head identities, scoped context and validated comment locations; exceeding limits is visible rather than silently ignored.
+
+### Workstream B: Requirements-aware review
+
+- Accept explicit sources: Markdown/text specifications, acceptance criteria, architecture decisions, issue or PR descriptions. Requirements from external systems are supplied as content/links in this milestone, not fetched via broad OAuth integrations.
+- Extract traceable requirement statements and preserve IDs/locators and original text. Separate hard requirements from commentary and examples. Flag ambiguous/conflicting sources.
+- Produce a requirement-by-requirement assessment with `appears_satisfied`, `partially_satisfied`, `not_satisfied`, `unclear`, and `not_assessed`, each with justification and relevant code references.
+- Treat missing requirements as **not supplied**, not as a review failure or a reason to invent requirements.
+
+**Acceptance:** On a fixture where the spec requires token expiration and single use, the review identifies a genuinely missing invariant with an exact requirement citation; in another fixture where the invariant is enforced in a different file, the reviewer finds the compensating control instead of falsely claiming it is absent.
+
+### Workstream C: Semantic code review
+
+- Implement a **small provider interface** for one real configured LLM provider, plus a deterministic fake for tests. The core must not import a provider SDK at package-import time; provider configuration must be explicit, including token/cost budgets and data-handling disclosure.
+- Accept structured externally proposed findings from a coding agent, with the **same downstream normalization, deduplication, validation, and rendering**. Do not require a second model for this mode.
+- Review logic, error paths, security-relevant behavior, API contracts, regression risk, edge cases and test coverage alongside requirements.
+- Prefer changed lines and their consequences; trace surrounding or downstream code when relevant. Check counterexamples and compensating code before promoting an assertion to an `issue`.
+- Separate finding discovery from claim verification. `not_verified` is not the same as `blocked` or `inconclusive`.
+
+**Acceptance:** Known-bug fixtures yield specific actionable comments, while clean or ambiguous fixtures do not force an issue. No deterministic code test is claimed to establish semantic correctness by itself.
+
+### Workstream D: Conventional Comments, typed report and CLI/SDK parity
+
+- Implement the [Conventional Comments](https://conventionalcomments.org/) grammar: `<label> [decorations]: <subject>`, followed by optional discussion. Canonical standard labels are `praise`, `nitpick`, `suggestion`, `issue`, `todo`, `question`, and `thought`. Custom or team extensions (such as `chore` and `note`) may be supported as optional configurations. Decorations like `(blocking)` and `(non-blocking)` are explicit and sparse.
+- Define a stable versioned `ReviewRequest`, `ReviewFinding`, `RequirementAssessment` and `ReviewReport` schema. Record path, line/range, source citations, severity, blocking recommendation, evidence type/status, suggested action and deduplication key. Keep review assessment separate from existing `VerificationResult` verdict semantics.
+- Produce both Markdown/Conventional Comments and JSON. CLI and SDK must share review logic; neither independently interprets model output.
+- Emit a meaningful summary for **zero findings** with assessed scope and omissions. A run without a configured provider and without agent-supplied candidates must fail clearly or run explicitly labeled deterministic-only checks; it cannot pretend to perform semantic code review.
+
+**Acceptance:** The exact same typed review input yields semantically equivalent SDK and CLI reports. Conventional Comments parse correctly, use valid anchors, and include requirements coverage when supplied.
+
+### Workstream E: Quality and first evidence of product value
+
+- Curate a small **versioned evaluation set** (initially roughly 10–20 representative PR/change fixtures, including known defects, negative cases, partial requirements, ambiguous requirements and compensating logic). Freeze an independent held-out subset.
+- Compare at least one **real model review** with the same model and context operating through VerifyCraft. Include a credible Git/test-assisted agent baseline when practical, rather than treating the current keyword heuristic as an LLM.
+- Track precision of actionable findings, known-defect yield, coverage of explicit requirements, false positives, unnecessary comments, unverified-rate, human effort to run/review, latency, tokens and cost. Report results and limitations, including cases where there is no improvement.
+- Run contract, integration, lint, type, packaging and security regression checks. Preserve compatibility with `v0.1.0` verification APIs as far as possible.
+
+**Release gate:** A maintainer can install a candidate from a clean environment, review a representative diff end-to-end with optional requirements, obtain useful Conventional Comments and JSON, and explain each finding's source and evidence limitations. There must be positive demonstrated utility versus a bare prompt/reviewer baseline; a test suite alone is not sufficient.
+
+### Explicitly not in `v0.2.0`
+
+- GitHub PR comment posting or automatic review approvals; containerized execution of untrusted repositories; generic autonomous test generation; a multi-agent reviewer council; broad provider matrix; IDE extension; hosted server or billing; mandatory MCP, LangGraph or third-party agent framework.
+- Do not build a provider-independent "autonomous reviewer" that secretly requires the user to discover every candidate manually. Both programmatic autonomous review **with a configured provider** and agent-supplied review candidates must be coherent use cases.
+
+## 5. `v0.3.0`: Evidence-aware review and targeted checking
+
+Move beyond source-only findings without turning the project into a test runner:
+
+- Map individual review findings to explicit testable observations, static checks, or other approved evidence paths, with `not_verified` when no safe check exists.
+- Support check selection, rather than forcing callers to know the exact pytest file and expected output. Never execute an arbitrary model-generated shell string.
+- Resolve project execution environments explicitly (including project virtual environments). Address the isolated-interpreter mismatch from global `uv tool install` when selecting a trusted test backend.
+- Provide a secure isolation implementation **before** running untrusted PR code, or return `blocked` clearly when unavailable. Trusted local mode is not isolation.
+- Optionally compare behavior at base/head for the same check when environments and test identity are genuinely comparable; distinguish observed behavioral regression from inferred root cause.
+- Reuse `v0.1.0` `VerificationEngine` where it genuinely fits, extending types compatibly and attaching evidence IDs to review findings.
+
+**Exit gate:** On a held-out benchmark, executable evidence changes the status of correct and incorrect review hypotheses as expected, without fabricated confirmation or unsafe execution. Publish incremental quality/cost effects versus review alone.
+
+## 6. `v0.4.0`: Meet coding agents where they work
+
+Expose the same review and verification capabilities through a **thin agent-integration layer**. Prioritize a proven integration workflow with Claude Code or Copilot; choose MCP, skills, instructions, or another interface only after testing the host's actual capabilities.
+
+- An agent should invoke review on an explicit branch pair and optionally submit its own candidate findings, without being forced to call a second LLM.
+- Return structured context, requirement assessments, Conventional Comments and provenance. A tool call must not silently upload source or run code.
+- Compare an agent using normal Git/tests with the same agent using VerifyCraft on a controlled dataset; measure whether the tool genuinely improves review quality, time or evidence reliability.
+- Keep review core standalone. Do not duplicate reasoning, check policies or formatting inside the agent adapter.
+
+**Exit gate:** A documented end-to-end task works in a real agent host, requires little setup and improves a measurable developer outcome. If a simple instruction to the agent works just as well, do not add a redundant adapter.
+
+## 7. `v0.5.0`: GitHub Action, optional LangGraph and ecosystem
+
+- **GitHub Action:** Review PR diffs with minimum permissions; publish an artifact/summary by default; post Conventional Comments inline only under explicit policy. Resolve changed-line anchors, avoid duplicate comment spam, handle forked PRs as untrusted input, and never expose write tokens to executable PR content.
+- **LangGraph adapter:** Optional node(s) over the same SDK with JSON-serializable contracts; no duplicated orchestrator.
+- **Reliability:** Expand benchmarks across independent repositories, provider variants, requirements quality levels and languages. Document the coverage and limits of each execution backend.
+- **Compatibility:** Define schema/version migration, deprecation, supported environments, contributor docs and security reporting.
+
+**Exit gate:** A new developer can adopt direct SDK, CLI or a relevant adapter without knowing VerifyCraft internals; reports are substantively equivalent for the same inputs and declared review mode.
+
+## 8. Prioritization and anti-goals
+
+| Must exist before wider adoption | Later, after value is demonstrated | Avoid |
+| --- | --- | --- |
+| Real diff-aware review | More languages and models | Creating a general AI-agent operating system |
+| Requirements mapping with citations | Automated requirement importers | Invented acceptance criteria |
+| Conventional Comments + JSON | PR comment publishing | An agent council as the default reviewer |
+| Useful CLI + SDK review experience | LangGraph/MCP/GitHub Action wrappers | Empty adapters before the core works |
+| Honest evidence/uncertainty | Sophisticated verification orchestration | Relabeling pytest output as bug discovery |
+| Reproducible quality evaluation | More test backends | Claiming a keyword heuristic is an LLM benchmark |
+
+## 9. Initial implementation backlog for `v0.2.0`
+
+Work in a single release-preparation branch; each item should finish with a runnable acceptance test. Do not create empty future modules.
+
+- [ ] Update `docs/FOUNDATIONS.md` and this roadmap; align README with what `v0.1.0` does versus proposed behavior.
+- [ ] Define `ReviewRequest`, `ReviewFinding`, `RequirementAssessment` and `ReviewReport` with explicit review/evidence status separation and JSON serialization.
+- [ ] Implement resolved Git revision/diff ingestion with bounded context and validated line/rename mapping.
+- [ ] Implement requirement-source parsing and per-requirement traceability/coverage reporting.
+- [ ] Implement one genuinely useful semantic reviewer with an explicitly configured provider; add a deterministic test adapter.
+- [ ] Support externally supplied candidate findings from an existing agent without a mandatory additional model call.
+- [ ] Implement claim validation, context/counterexample checks, deduplication and severity/priority policy.
+- [ ] Render correct Conventional Comments, Markdown and JSON with file/line/source references.
+- [ ] Expose review from the Python SDK and CLI with equivalent behavior and proper error handling.
+- [ ] Add a complete examples repository/fixture and golden acceptance tests, including at least one requirement violation and one clean case.
+- [ ] Benchmark against a real LLM/agent baseline with comparable inputs; publish limitations and actual metrics.
+- [ ] Preserve existing `v0.1.0` verification behavior; run full CI, packaging, security and documentation checks.
+
+## 10. Concrete end-to-end acceptance scenarios
+
+These are proposed test cases, **not results already achieved**.
+
+| Scenario | Required behavior |
+| --- | --- |
+| Changed auth handler violates a supplied expiration requirement | Issue with exact changed-line anchor, requirement citation, impact and actionable fix; do not call it runtime-verified if no check ran. |
+| Token consumption occurs in an unchanged repository helper | Reviewer inspects relevant context and avoids falsely reporting token reuse. |
+| A requirement is vague or two sources conflict | Emit a question/unclear assessment, not a fabricated blocking issue. |
+| A code diff includes a known logic regression with no requirements supplied | Produce a code-specific review finding and state `requirements_not_assessed`. |
+| A clean change or stylistic-only changes | Do not fabricate blocking bugs or fill the report with low-value nitpicks. |
+| A renamed file or changed-line anchor cannot be resolved | Use correct Git line mapping or fall back to file/summary context, never invent a location. |
+| No configured provider and no external candidates | Explicit error or limited deterministic mode; never present an empty semantic review as thorough analysis. |
+| An external agent supplies candidates | VerifyCraft normalizes, challenges and renders without automatically invoking another LLM. |
+| Untrusted PR content requests secret disclosure or command execution | Treat instructions as untrusted data; never run or exfiltrate without explicit safe authorization. |
+| Budget or source-context limits are reached | Report omitted scope, partial coverage and unknowns rather than false completeness. |
+
+## 11. Metrics and go/no-go decision
+
+Treat quality as a multi-objective evaluation, not a single accuracy score. Publish datasets, annotations, evaluation method and failure cases.
+
+- **Actionable finding precision:** proportion of actionable comments judged correct and useful by independent review.
+- **Known-defect yield:** rate at which relevant known regressions and requirement violations are surfaced.
+- **Requirements traceability:** number of supplied requirements assessed with a defensible source and code link; track false claims of compliance separately.
+- **Unsupported assertion rate:** proportion of asserted facts lacking adequate cited context or appropriately qualified uncertainty.
+- **Unnecessary comment volume:** low-value duplicates, speculative blocking comments or cosmetic noise per change.
+- **Evidence yield:** when checks run, rate of trustworthy `supported`/`refuted` outcomes and explicit inconclusive/blocked outcomes.
+- **Practical costs:** reviewer setup effort, latency, provider tokens/price, commands, CI resources and developer follow-up time.
+
+**Go** if the first review slice adds demonstrable actionable insight or substantially reduces user effort compared with a credible baseline, while preserving transparent uncertainty and safety. **No-go / rescope** if it merely repackages what the same coding agent already does without improving outcomes. Do not accelerate integration work to compensate for poor results.
+
+## 12. Documentation consistency and history
+
+Keep historical release notes for `v0.1.0` intact, but avoid broad claims that the current product discovers code-review findings. Make the README explicit about what is available now and what is proposed. Replace stale statements such as "working name" or "not implemented" in the foundation and treat the old Stage 0–5 ordering as historical planning, not a binding dependency chain for a review-first product.
+
+**Related documents:** [FOUNDATIONS.md](FOUNDATIONS.md), [Release guide](RELEASING.md), [v0.1.0 release](https://github.com/apply-the/verifycraft/releases/tag/v0.1.0), [Conventional Comments](https://conventionalcomments.org/).
