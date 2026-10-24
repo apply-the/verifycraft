@@ -1,7 +1,7 @@
 """Command line interface for VerifyCraft.
 
-Provides a thin CLI entry point over the exact same VerificationEngine.
-Does not duplicate any verification or evaluation business logic.
+Provides CLI entry points for both verification and semantic code review.
+Does not duplicate any verification or review business logic.
 """
 
 from __future__ import annotations
@@ -23,10 +23,17 @@ from verifycraft.contracts.models import (
     VerificationInput,
     VerificationResult,
 )
+from verifycraft.contracts.review import (
+    ReviewPolicy,
+    ReviewRequest,
+)
 from verifycraft.engine import VerificationEngine
+from verifycraft.review.engine import ReviewEngine
+from verifycraft.review.git import GitError
+from verifycraft.review.providers.base import ProviderError
 
 
-def _format_summary(result: VerificationResult) -> str:
+def _format_verification_summary(result: VerificationResult) -> str:
     lines = [
         "=" * 60,
         f" VerifyCraft Verification Report ({result.schema_version})",
@@ -61,6 +68,10 @@ def _format_summary(result: VerificationResult) -> str:
     return "\n".join(lines)
 
 
+# Backward-compatible alias
+_format_summary = _format_verification_summary
+
+
 VERDICT_EXIT_CODES: dict[Verdict, int] = {
     Verdict.SUPPORTED: 0,
     Verdict.REFUTED: 2,
@@ -72,14 +83,18 @@ VERDICT_EXIT_CODES: dict[Verdict, int] = {
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="verifycraft",
-        description="VerifyCraft: Composable review, testing, and verification capabilities.",
+        description="VerifyCraft: Evidence-aware code review and verification engine.",
         epilog=(
-            "Exit codes:\n"
+            "Verification exit codes:\n"
             "  0  Hypothesis SUPPORTED by observable evidence\n"
             "  1  Operational / CLI usage error\n"
             "  2  Hypothesis REFUTED by evidence\n"
             "  3  Verification INCONCLUSIVE\n"
-            "  4  Verification BLOCKED (policy or safety boundary)\n"
+            "  4  Verification BLOCKED (policy or safety boundary)\n\n"
+            "Review exit codes:\n"
+            "  0  Review completed successfully\n"
+            "  1  Operational / provider / Git error\n"
+            "  2  Review completed with blocking issues (when --strict is set)\n"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -137,6 +152,56 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["summary", "json"],
         default="summary",
         help="Output format (summary or json).",
+    )
+
+    # verifycraft review
+    review_parser = subparsers.add_parser(
+        "review",
+        help="Review code changes against context and optional requirements.",
+    )
+    review_parser.add_argument(
+        "path",
+        nargs="?",
+        default=".",
+        help="Target repository path (default: current directory).",
+    )
+    review_parser.add_argument(
+        "--base",
+        default="main",
+        help="Base git reference or branch (default: main).",
+    )
+    review_parser.add_argument(
+        "--head",
+        default="HEAD",
+        help="Head git reference or branch (default: HEAD).",
+    )
+    review_parser.add_argument(
+        "--requirements",
+        action="append",
+        default=[],
+        help="Path to requirement document or text (can be specified multiple times).",
+    )
+    review_parser.add_argument(
+        "--provider",
+        default="gemini",
+        help="Reviewer model provider: 'gemini', 'deterministic', 'fake' (default: gemini).",
+    )
+    review_parser.add_argument(
+        "--format",
+        choices=["markdown", "json", "comments"],
+        default="markdown",
+        help="Output format: markdown, json, or comments (default: markdown).",
+    )
+    review_parser.add_argument(
+        "--strict",
+        action="store_true",
+        help="Exit with code 2 if any blocking issues are reported.",
+    )
+    review_parser.add_argument(
+        "--timeout",
+        type=float,
+        default=60.0,
+        help="Review timeout in seconds (default: 60.0).",
     )
 
     return parser
@@ -200,9 +265,49 @@ def _execute_verify(args: argparse.Namespace) -> None:
     if args.format == "json":
         print(result.to_json(indent=2))
     else:
-        print(_format_summary(result))
+        print(_format_verification_summary(result))
 
     sys.exit(VERDICT_EXIT_CODES.get(result.verdict, 1))
+
+
+def _execute_review(args: argparse.Namespace) -> None:
+    policy = ReviewPolicy(
+        timeout_seconds=args.timeout,
+        fail_on_blocking=args.strict,
+    )
+
+    request = ReviewRequest(
+        repo_path=args.path,
+        base_revision=args.base,
+        head_revision=args.head,
+        requirements=args.requirements,
+        provider=args.provider,
+        policy=policy,
+    )
+
+    engine = ReviewEngine()
+    try:
+        report = engine.review(request)
+    except GitError as e:
+        print(f"VerifyCraft Git Error: {e}", file=sys.stderr)
+        sys.exit(1)
+    except ProviderError as e:
+        print(f"VerifyCraft Provider Error: {e}", file=sys.stderr)
+        sys.exit(1)
+    except Exception as e:
+        print(f"VerifyCraft Review Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    if args.format == "json":
+        print(report.to_json(indent=2))
+    elif args.format == "comments":
+        print(report.to_conventional_comments())
+    else:
+        print(report.to_markdown())
+
+    if args.strict and report.has_blocking_issues:
+        sys.exit(2)
+    sys.exit(0)
 
 
 def main(argv: Sequence[str] | None = None) -> None:
@@ -215,6 +320,8 @@ def main(argv: Sequence[str] | None = None) -> None:
 
     if args.subcommand == "verify":
         _execute_verify(args)
+    elif args.subcommand == "review":
+        _execute_review(args)
 
 
 if __name__ == "__main__":

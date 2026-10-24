@@ -12,8 +12,7 @@ coverage:
         threshold: 1%
     patch:
       default:
-        target: auto
-        threshold: 1%
+        target: 90%
 
 comment:
   layout: "reach, diff, flags, files"

@@ -29,12 +29,12 @@ jobs:
           fi
 
           echo "Checking branch name: $HEAD_REF"
-          BRANCH_REGEX='^(feature|bugfix|fix|hotfix|docs|chore|refactor|test|ci|dependabot)/.+$'
+          BRANCH_REGEX='^(feature|feat|bugfix|fix|hotfix|docs|chore|refactor|test|ci|dependabot)/.+$'
 
           if [[ ! "$HEAD_REF" =~ $BRANCH_REGEX ]]; then
             echo "::error::Branch name '$HEAD_REF' violates naming convention."
-            echo "Branch name must match: ^(feature|bugfix|fix|hotfix|docs|chore|refactor|test|ci|dependabot)/.+$"
-            echo "Example: feature/pr-regression-slice, fix/stale-evidence, chore/update-deps"
+            echo "Branch name must match: ^(feature|feat|bugfix|fix|hotfix|docs|chore|refactor|test|ci|dependabot)/.+$"
+            echo "Example: feature/first-code-review, feat/first-code-review, fix/stale-evidence, chore/update-deps"
             exit 1
           fi
           echo "Branch name is valid."
