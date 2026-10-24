@@ -574,3 +574,118 @@ def test_requirements_parser_edge_cases(tmp_path: Path) -> None:
     )
     assert len(all_reqs) == 1
     assert all_reqs[0].id == "REQ-01"
+
+
+def test_review_request_empty_repo_path() -> None:
+    with pytest.raises(ValueError, match="repo_path must not be empty"):
+        ReviewRequest(repo_path="   ")
+
+
+def test_git_parse_diff_multiple_hunks(git_repo: Path) -> None:
+    collector = GitContextCollector(str(git_repo))
+    diff = """diff --git a/multi.py b/multi.py
+--- a/multi.py
++++ b/multi.py
+@@ -1,3 +1,3 @@
+ line1
+-line2
++line2_mod
+ line3
+@@ -10,3 +10,3 @@
+ line10
+-line11
++line11_mod
+ line12
+"""
+    parsed = collector.parse_diff(diff)
+    assert len(parsed["multi.py"].hunks) == 2
+
+
+def test_git_parse_diff_invalid_chunk_header(git_repo: Path) -> None:
+    collector = GitContextCollector(str(git_repo))
+    diff = "diff --git invalid format\nSome random content\n"
+    parsed = collector.parse_diff(diff)
+    assert len(parsed) == 0
+
+
+def test_review_engine_finding_fallback_line_note(git_repo: Path) -> None:
+    fake_adapter = MagicMock()
+    fake_adapter.model_name = "fake-model"
+    fake_adapter.review.return_value = ProviderResponse(
+        summary="Review.",
+        candidate_findings=[
+            RawCandidateFinding(
+                file_path="src/calc.py",
+                line=999,
+                label="issue",
+                subject="Bad line",
+                description="Line is invalid",
+            )
+        ],
+        requirement_assessments=[],
+    )
+    engine = ReviewEngine(provider_adapter=fake_adapter)
+    f = git_repo / "src" / "calc.py"
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text("def add(): pass\n")
+    subprocess.run(["git", "add", "."], cwd=git_repo, check=True)
+    subprocess.run(["git", "commit", "-m", "calc"], cwd=git_repo, check=True)
+    f.write_text("def add(): return 1\n")
+    subprocess.run(["git", "commit", "-am", "mod"], cwd=git_repo, check=True)
+
+    report = engine.review(
+        ReviewRequest(
+            repo_path=str(git_repo),
+            base_revision="HEAD~1",
+            head_revision="HEAD",
+            provider="fake",
+        )
+    )
+    assert len(report.findings) == 1
+    assert report.findings[0].line is None
+    assert "Line 999 is outside changed hunks" in report.findings[0].description
+
+
+def test_review_engine_requirement_satisfied_via_compensating_control(git_repo: Path) -> None:
+    fake_adapter = MagicMock()
+    fake_adapter.model_name = "fake-model"
+    fake_adapter.review.return_value = ProviderResponse(
+        summary="Review.",
+        candidate_findings=[
+            RawCandidateFinding(
+                file_path="src/auth.py",
+                line=2,
+                label="issue",
+                subject="Missing token expiration",
+                description="Token expiry missing",
+                requirement_ids=["REQ-EXP-01"],
+            )
+        ],
+        requirement_assessments=[],
+    )
+    engine = ReviewEngine(provider_adapter=fake_adapter)
+    f = git_repo / "src" / "auth.py"
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text("def login(): pass\n")
+    h = git_repo / "src" / "auth_helper.py"
+    h.write_text("def check_token_expiration(token): pass\n")
+    subprocess.run(["git", "add", "."], cwd=git_repo, check=True)
+    subprocess.run(["git", "commit", "-m", "init auth"], cwd=git_repo, check=True)
+
+    f.write_text("from auth_helper import check_token_expiration\ndef login(): pass\n")
+    subprocess.run(["git", "commit", "-am", "import helper"], cwd=git_repo, check=True)
+
+    req_file = git_repo / "reqs.md"
+    req_file.write_text("[REQ-EXP-01] Token must expire.\n")
+
+    report = engine.review(
+        ReviewRequest(
+            repo_path=str(git_repo),
+            base_revision="HEAD~1",
+            head_revision="HEAD",
+            requirements=[str(req_file)],
+            provider="fake",
+        )
+    )
+    assert report.requirement_assessments[0].requirement_id == "REQ-EXP-01"
+    assert report.requirement_assessments[0].status == RequirementStatus.APPEARS_SATISFIED
