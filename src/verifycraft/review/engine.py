@@ -413,7 +413,7 @@ class ReviewEngine:
             return False
 
         # Extract tokens from requirement text and ID
-        tokens = re.findall(r"[A-Za-z0-9_]{3,}", f"{req.id} {req.text}".lower())
+        tokens = re.findall(r"\w{3,}", f"{req.id} {req.text}".lower())
         meaningful_tokens = [t for t in tokens if t not in self.STOP_WORDS]
         if not meaningful_tokens:
             return False
@@ -422,6 +422,51 @@ class ReviewEngine:
         changed_files_str = " ".join(context.changed_files.keys()).lower()
 
         return any(tok in diff_lower or tok in changed_files_str for tok in meaningful_tokens)
+
+    def _assess_from_provider(
+        self,
+        raw_a: RawRequirementAssessment,
+        req_id: str,
+        is_relevant: bool,
+    ) -> tuple[RequirementStatus, str]:
+        """Validate and normalize provider-supplied requirement assessment."""
+        try:
+            raw_status = RequirementStatus(raw_a.status.lower())
+        except ValueError:
+            raw_status = RequirementStatus.UNCLEAR
+
+        if (
+            raw_status
+            in (
+                RequirementStatus.APPEARS_SATISFIED,
+                RequirementStatus.PARTIALLY_SATISFIED,
+            )
+            and not is_relevant
+        ):
+            # Downgrade: provider claimed satisfied without evidence in diff
+            return (
+                RequirementStatus.NOT_ASSESSED,
+                f"Provider claimed '{raw_a.status}', but no relevant changes or "
+                f"positive evidence exist in diff context for '{req_id}'.",
+            )
+        return raw_status, raw_a.explanation
+
+    def _assess_unexamined_fallback(
+        self,
+        req_id: str,
+        is_relevant: bool,
+    ) -> tuple[RequirementStatus, str]:
+        """Produce safe fallback for requirements not explicitly assessed."""
+        if is_relevant:
+            return (
+                RequirementStatus.UNCLEAR,
+                f"Changes touch components related to '{req_id}', but positive "
+                "evidence demonstrating requirement satisfaction was not established.",
+            )
+        return (
+            RequirementStatus.NOT_ASSESSED,
+            f"Requirement '{req_id}' not assessed: no relevant changes in diff context.",
+        )
 
     def _assess_single_requirement(
         self,
@@ -452,29 +497,9 @@ class ReviewEngine:
             explanation = "Requirement verified satisfied via compensating controls in context."
         # 3. Provider-supplied assessment validated against context
         elif req_id_clean in model_assessments_map:
-            raw_a = model_assessments_map[req_id_clean]
-            try:
-                raw_status = RequirementStatus(raw_a.status.lower())
-            except ValueError:
-                raw_status = RequirementStatus.UNCLEAR
-
-            if raw_status in (
-                RequirementStatus.APPEARS_SATISFIED,
-                RequirementStatus.PARTIALLY_SATISFIED,
-            ):
-                if not is_relevant:
-                    # Downgrade: provider claimed satisfied without evidence in diff
-                    status = RequirementStatus.NOT_ASSESSED
-                    explanation = (
-                        f"Provider claimed '{raw_a.status}', but no relevant changes or "
-                        f"positive evidence exist in diff context for '{req.id}'."
-                    )
-                else:
-                    status = raw_status
-                    explanation = raw_a.explanation
-            else:
-                status = raw_status
-                explanation = raw_a.explanation
+            status, explanation = self._assess_from_provider(
+                model_assessments_map[req_id_clean], req.id, is_relevant
+            )
         # 4. Clarification questions or suggestions without explicit provider assessment
         elif clarifying_findings:
             status = RequirementStatus.UNCLEAR
@@ -484,17 +509,7 @@ class ReviewEngine:
             )
         # 5. Fallback: never silently consider unexamined requirement satisfied
         else:
-            if is_relevant:
-                status = RequirementStatus.UNCLEAR
-                explanation = (
-                    f"Changes touch components related to '{req.id}', but positive "
-                    "evidence demonstrating requirement satisfaction was not established."
-                )
-            else:
-                status = RequirementStatus.NOT_ASSESSED
-                explanation = (
-                    f"Requirement '{req.id}' not assessed: no relevant changes in diff context."
-                )
+            status, explanation = self._assess_unexamined_fallback(req.id, is_relevant)
 
         return RequirementAssessment(
             requirement_id=req.id,

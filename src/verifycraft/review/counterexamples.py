@@ -128,6 +128,56 @@ class CounterexampleChecker:
                         return True
         return False
 
+    def _matches_call_token(
+        self,
+        call_name: str,
+        call_args: list[str],
+        subject_token: str | None,
+    ) -> bool:
+        if not self._is_matching_expiration_call(call_name):
+            return False
+        if not subject_token:
+            return True
+        return (subject_token in call_name) or any(subject_token in a for a in call_args)
+
+    def _check_related_expiration(
+        self,
+        calls: list[tuple[str, list[str]]],
+        finding: ReviewFinding,
+        req_info: str,
+        context: GitReviewContext,
+        subject_token: str | None,
+    ) -> str | None:
+        for rel_path, rel_content in context.related_files.items():
+            has_pat = any(p.search(rel_content) for p in self.COMPENSATING_PATTERNS["expiration"])
+            if not has_pat:
+                continue
+            for call_name, call_args in calls:
+                if self._matches_call_token(call_name, call_args, subject_token):
+                    return (
+                        f"Candidate issue {finding.id}{req_info} on '{finding.file_path}' "
+                        f"claiming missing expiration was dismissed: call to '{call_name}' "
+                        f"verified on execution path in '{finding.file_path}' "
+                        f"(defined in '{rel_path}')."
+                    )
+        return None
+
+    def _check_scope_expiration(
+        self,
+        calls: list[tuple[str, list[str]]],
+        finding: ReviewFinding,
+        req_info: str,
+        subject_token: str | None,
+    ) -> str | None:
+        for call_name, call_args in calls:
+            if self._matches_call_token(call_name, call_args, subject_token):
+                return (
+                    f"Candidate issue {finding.id}{req_info} on '{finding.file_path}' "
+                    f"claiming missing expiration was dismissed: compensating control "
+                    f"'{call_name}' verified in surrounding execution scope."
+                )
+        return None
+
     def _check_expiration_compensation(
         self,
         finding: ReviewFinding,
@@ -154,50 +204,22 @@ class CounterexampleChecker:
         scope = self._find_enclosing_scope(tree, finding.line)
         calls = self._extract_calls(scope)
         subject_token = self._detect_subject_token(finding_text)
-
         req_info = f" ({', '.join(finding.requirement_ids)})" if finding.requirement_ids else ""
 
-        # 1. Check if compensating logic is imported and called on the execution path
-        for rel_path, rel_content in context.related_files.items():
-            for pat in self.COMPENSATING_PATTERNS["expiration"]:
-                if not pat.search(rel_content):
-                    continue
+        related_note = self._check_related_expiration(
+            calls, finding, req_info, context, subject_token
+        )
+        if related_note:
+            return related_note
 
-                for call_name, call_args in calls:
-                    if self._is_matching_expiration_call(call_name):
-                        if subject_token:
-                            token_in_call = (subject_token in call_name) or any(
-                                subject_token in a for a in call_args
-                            )
-                            if not token_in_call:
-                                continue
-                        return (
-                            f"Candidate issue {finding.id}{req_info} on '{finding.file_path}' "
-                            f"claiming missing expiration was dismissed: call to '{call_name}' "
-                            f"verified on execution path in '{finding.file_path}' "
-                            f"(defined in '{rel_path}')."
-                        )
+        scope_note = self._check_scope_expiration(calls, finding, req_info, subject_token)
+        if scope_note:
+            return scope_note
 
-        # 2. Check if compensating logic is present in unchanged code within the same function scope
-        for call_name, call_args in calls:
-            if self._is_matching_expiration_call(call_name):
-                if subject_token:
-                    token_in_call = (subject_token in call_name) or any(
-                        subject_token in a for a in call_args
-                    )
-                    if not token_in_call:
-                        continue
-                return (
-                    f"Candidate issue {finding.id}{req_info} on '{finding.file_path}' "
-                    f"claiming missing expiration was dismissed: compensating control "
-                    f"'{call_name}' verified in surrounding execution scope."
-                )
-
-        # 3. Check direct timestamp comparison in scope
         if self._has_expires_at_check(scope, subject_token):
             return (
                 f"Candidate issue {finding.id}{req_info} on '{finding.file_path}' "
-                f"claiming missing expiration was dismissed: expiration comparison "
+                "claiming missing expiration was dismissed: expiration comparison "
                 "check verified in scope."
             )
 

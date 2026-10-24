@@ -233,3 +233,96 @@ def test_cli_remote_disclosure_note(
     _, err = capsys.readouterr()
     assert "VerifyCraft: Remote provider 'gemini' selected" in err
     assert "transmitted to the Gemini API" in err
+
+
+def test_load_candidates_formats(tmp_path: Path) -> None:
+    """Verifies parsing of candidate findings in various JSON structures."""
+    from verifycraft.cli import _load_candidates_from_file
+
+    # 1. Dict with "candidate_findings"
+    f1 = tmp_path / "cand1.json"
+    f1.write_text(
+        json.dumps(
+            {
+                "candidate_findings": [
+                    {
+                        "file_path": "a.py",
+                        "line": 1,
+                        "label": "issue",
+                        "subject": "Subj",
+                        "description": "Desc",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    loaded1 = _load_candidates_from_file(f1)
+    assert len(loaded1) == 1
+    assert loaded1[0].file_path == "a.py"
+    assert loaded1[0].id == "cand-001"
+
+    # 2. Dict with "findings" and non-dict items to skip
+    f2 = tmp_path / "cand2.json"
+    f2.write_text(
+        json.dumps(
+            {
+                "findings": [
+                    "not-a-dict",
+                    {
+                        "file_path": "b.py",
+                        "line": 2,
+                        "label": "note",
+                        "subject": "Note",
+                        "description": "Desc",
+                    },
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    loaded2 = _load_candidates_from_file(f2)
+    assert len(loaded2) == 1
+    assert loaded2[0].file_path == "b.py"
+
+    # 3. Single dict finding
+    f3 = tmp_path / "cand3.json"
+    f3.write_text(
+        json.dumps(
+            {
+                "file_path": "c.py",
+                "line": 3,
+                "label": "question",
+                "subject": "Why?",
+                "description": "Desc",
+            }
+        ),
+        encoding="utf-8",
+    )
+    loaded3 = _load_candidates_from_file(f3)
+    assert len(loaded3) == 1
+    assert loaded3[0].file_path == "c.py"
+
+
+def test_load_candidates_errors(tmp_path: Path) -> None:
+    """Verifies error handling for missing files, invalid JSON, or non-object roots."""
+    from verifycraft.cli import _load_candidates_from_file
+
+    # Missing file
+    with pytest.raises(SystemExit) as exc1:
+        _load_candidates_from_file(tmp_path / "non_existent.json")
+    assert exc1.value.code == 1
+
+    # Invalid JSON syntax
+    bad_json = tmp_path / "bad.json"
+    bad_json.write_text("invalid json", encoding="utf-8")
+    with pytest.raises(SystemExit) as exc2:
+        _load_candidates_from_file(bad_json)
+    assert exc2.value.code == 1
+
+    # Primitive JSON type (not list or dict)
+    primitive = tmp_path / "primitive.json"
+    primitive.write_text("12345", encoding="utf-8")
+    with pytest.raises(SystemExit) as exc3:
+        _load_candidates_from_file(primitive)
+    assert exc3.value.code == 1
