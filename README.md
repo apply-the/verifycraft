@@ -41,9 +41,9 @@ In version `0.1.0`, VerifyCraft delivers the foundational, independent **determi
 VerifyCraft is evolving through focused, outcome-driven milestones (see [ROADMAP.md](docs/ROADMAP.md)):
 
 - 🎯 **`v0.2.0`: Review-First Vertical Slice (Next Milestone)**: End-to-end review of diffs and context against optional requirements, producing actionable Conventional Comments and JSON through CLI and Python SDK; supports both configured model providers and host-agent candidate finding ingestion without a mandatory second model.
-- ⏳ **`v0.3.0`: Context, Traceability & PR-Ready Review**: Multi-file repository context selection, structured requirements traceability, and deduplication.
-- ⏳ **`v0.4.0`: Isolated Verification & Sandbox Boundaries**: Containerized sandbox isolation for safe untrusted code execution, targeted test generation, and hypothesis synthesis.
-- ⏳ **`v0.5.0`: Ecosystem & Integrations**: LangGraph adapter, GitHub Actions PR-review bot, and multi-language verification backends.
+- ⏳ **`v0.3.0`: Evidence-Aware Review**: Link review findings to safe targeted verification, check selection, and containerized sandbox isolation.
+- ⏳ **`v0.4.0`: Coding-Agent Distribution**: Claude Code/Copilot-friendly tool surface and candidate ingestion without requiring a second mandatory LLM.
+- ⏳ **`v0.5.0`: PR Automation & Ecosystem**: GitHub Action review bot, optional LangGraph adapter, and multi-language check backends.
 
 ---
 
@@ -105,9 +105,131 @@ pip install -e ".[dev]"
 
 ---
 
-## Python SDK Quickstart
+## Semantic Code Review (CLI & SDK)
 
-VerifyCraft provides a typed verification engine that evaluates explicit regression hypotheses against approved checks:
+VerifyCraft v0.2.0 introduces the **first working, requirements-aware semantic code review engine**:
+It maps Git diffs to relevant surrounding context, evaluates against optional requirements, runs semantic analysis via model providers (e.g. Gemini) or deterministic adapters, checks for compensating controls in surrounding files, and generates actionable [Conventional Comments](https://conventionalcomments.org/) and structured JSON.
+
+### Review CLI
+
+Review a Git diff against optional requirements:
+
+```bash
+# Set Gemini API key for live LLM review
+export GEMINI_API_KEY="your-gemini-api-key"
+
+# Review changes between main and current branch against requirement specs
+verifycraft review . \
+  --base main \
+  --head HEAD \
+  --requirements docs/auth.md \
+  --provider gemini \
+  --format markdown
+
+# Review without requirements and emit Conventional Comments
+verifycraft review . \
+  --base main \
+  --head feature/auth \
+  --provider gemini \
+  --format comments
+
+# Emit structured machine-readable JSON report
+verifycraft review . \
+  --base origin/main \
+  --head HEAD \
+  --provider gemini \
+  --format json
+
+# Run offline deterministic test review (no API key required)
+verifycraft review . \
+  --base main \
+  --head HEAD \
+  --provider deterministic \
+  --format comments
+```
+
+#### Review CLI Arguments
+
+| Argument | Description | Default |
+| :--- | :--- | :--- |
+| `repo` | Path to git repository (positional) | `.` |
+| `--base` | Base git revision, branch, or commit | `main` |
+| `--head` | Head git revision, branch, or commit | `HEAD` |
+| `--requirements` | Optional path to markdown or text requirement document | None |
+| `--provider` | Review provider adapter (`gemini`, `deterministic`) | `gemini` |
+| `--model` | Model name override for LLM provider | `gemini-2.5-pro` |
+| `--format` | Output format: `markdown`, `json`, `comments` | `markdown` |
+| `--strict` | Fail closed (exit code 1) on blocking issues or unsatisfied requirements | Disabled |
+
+### Review Python SDK Quickstart
+
+The Python SDK exposes `ReviewEngine`, sharing the exact same pipeline and contracts:
+
+```python
+from pathlib import Path
+from verifycraft import (
+    ReviewEngine,
+    ReviewPolicy,
+    ReviewRequest,
+)
+
+# 1. Configure the review request
+request = ReviewRequest(
+    repo_path=Path("."),
+    base_revision="main",
+    head_revision="HEAD",
+    requirements_path=Path("docs/auth.md"),  # Optional
+    provider="gemini",  # or "deterministic"
+    model_name="gemini-2.5-pro",
+)
+
+# 2. Configure review resource and safety policy
+policy = ReviewPolicy(
+    max_changed_files=50,
+    max_total_diff_bytes=200_000,
+    max_surrounding_lines=150,
+    timeout_seconds=60.0,
+    require_explicit_remote_provider=True,
+)
+
+# 3. Execute semantic review
+engine = ReviewEngine()
+report = engine.review(request, policy=policy)
+
+# 4. Access structured results
+print(f"Summary: {report.summary}")
+print(f"Total Findings: {len(report.findings)}")
+for req in report.requirement_assessments:
+    print(f"[{req.requirement_id}] {req.status.value}: {req.rationale}")
+
+# 5. Output Conventional Comments (e.g. for PR comments)
+print("\n--- Conventional Comments ---")
+print(report.to_conventional_comments())
+
+# 6. Or output full Markdown / JSON
+print("\n--- Markdown Report ---")
+print(report.to_markdown())
+```
+
+### Conventional Comments Standard
+
+VerifyCraft strictly follows the [Conventional Comments](https://conventionalcomments.org/) specification:
+
+```text
+<label> [(blocking|non-blocking)]: <subject>
+
+<discussion / rationale / impact / suggested fix>
+```
+
+- **Canonical Labels**: `issue`, `suggestion`, `nitpick`, `praise`, `todo`, `question`, `thought`.
+- **Explicit Blocking Decorations**: Decoupled from severity (e.g., `issue (blocking): ...` vs `suggestion (non-blocking): ...`).
+- **Grounded Anchors**: Only valid changed lines within diff hunks are anchored inline. Unchanged lines or ungrounded locations are safely downgraded to file-level comments rather than fabricating line numbers.
+
+---
+
+## Hypothesis Verification Engine (v0.1.0 SDK)
+
+VerifyCraft also provides a typed verification engine that evaluates explicit regression hypotheses against approved checks:
 
 ```python
 from verifycraft import (
@@ -168,9 +290,9 @@ print("JSON Output:\n", result.to_json(indent=2))
 
 ---
 
-## Standalone CLI Usage
+## Hypothesis Verification CLI (v0.1.0 CLI)
 
-The VerifyCraft CLI mirrors the Python SDK, sharing the exact same engine and typed schemas:
+The `verifycraft verify` CLI mirrors the verification SDK, sharing the exact same engine and typed schemas:
 
 ```bash
 # Display help and version
@@ -215,7 +337,7 @@ VerifyCraft uses deterministic exit codes to communicate verification verdicts i
 1. **Fail-Closed Verification Scope**:
    Verification scope resolution enforces a hard limit of **500 relevant repository files**. If a repository or target scope exceeds 500 files, the engine raises a `FingerprintError` and refuses to produce a partial or misleading fingerprint.
 2. **Advisory Network Policy**:
-   In `trusted_local` mode, setting `allow_network=False` indicates the intended constraint. Because `trusted_local` runs on the local host without kernel namespace isolation, it does not construct an OS firewall boundary. Full containerized isolation is scheduled for future container sandboxing (`v0.4.0`).
+   In `trusted_local` mode, setting `allow_network=False` indicates the intended constraint. Because `trusted_local` runs on the local host without kernel namespace isolation, it does not construct an OS firewall boundary. Full containerized isolation is scheduled for future container sandboxing (`v0.3.0`).
 3. **Untrusted Code Rejection**:
    Running with `untrusted_code=True` in `trusted_local` mode is blocked by default (`Verdict.BLOCKED` / `PolicyViolationError`). Untrusted code must never execute on a bare host.
 4. **Independent Provenance Authentication for Cached Evidence**:
