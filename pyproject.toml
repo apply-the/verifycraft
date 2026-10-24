@@ -32,6 +32,9 @@ Repository = "https://github.com/apply-the/verifycraft"
 Issues = "https://github.com/apply-the/verifycraft/issues"
 
 [project.optional-dependencies]
+gemini = [
+    "google-genai>=0.1.0",
+]
 dev = [
     "pytest>=8.0.0",
     "pytest-cov>=5.0.0",
@@ -94,3 +97,12 @@ python_version = "3.11"
 strict = true
 warn_unused_configs = true
 files = ["src", "tests"]
+
+[[tool.mypy.overrides]]
+module = [
+    "google",
+    "google.genai",
+    "google.genai.*",
+]
+ignore_missing_imports = true
+
