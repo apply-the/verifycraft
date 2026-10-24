@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+from collections.abc import Generator
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -12,6 +13,24 @@ from verifycraft.review.providers.base import (
     ProviderConfigurationError,
 )
 from verifycraft.review.providers.gemini import GeminiReviewerAdapter
+
+
+@pytest.fixture
+def mock_genai_env() -> Generator[MagicMock, None, None]:
+    """Mock the google and google.genai modules so tests run even without google-genai."""
+    mock_genai = MagicMock()
+    mock_types = MagicMock()
+    mock_genai.types = mock_types
+
+    with patch.dict(
+        sys.modules,
+        {
+            "google": MagicMock(genai=mock_genai),
+            "google.genai": mock_genai,
+            "google.genai.types": mock_types,
+        },
+    ):
+        yield mock_genai
 
 
 def test_gemini_missing_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -36,16 +55,16 @@ def test_gemini_missing_package(monkeypatch: pytest.MonkeyPatch) -> None:
         adapter._get_client()
 
 
-def test_gemini_client_init_error_redacts_key() -> None:
+def test_gemini_client_init_error_redacts_key(mock_genai_env: MagicMock) -> None:
     adapter = GeminiReviewerAdapter(api_key="super-secret-key-xyz")
-    with patch("google.genai.Client", side_effect=ValueError("Failed with super-secret-key-xyz")):
-        with pytest.raises(ProviderConfigurationError) as exc_info:
-            adapter._get_client()
-        assert "super-secret-key-xyz" not in str(exc_info.value)
-        assert "[REDACTED]" in str(exc_info.value)
+    mock_genai_env.Client.side_effect = ValueError("Failed with super-secret-key-xyz")
+    with pytest.raises(ProviderConfigurationError) as exc_info:
+        adapter._get_client()
+    assert "super-secret-key-xyz" not in str(exc_info.value)
+    assert "[REDACTED]" in str(exc_info.value)
 
 
-def test_gemini_review_successful_json() -> None:
+def test_gemini_review_successful_json(mock_genai_env: MagicMock) -> None:
     adapter = GeminiReviewerAdapter(api_key="test-key")
     mock_client = MagicMock()
     mock_response = MagicMock()
@@ -93,7 +112,7 @@ def test_gemini_review_successful_json() -> None:
     assert result.tokens_used == 512
 
 
-def test_gemini_review_markdown_fenced_json() -> None:
+def test_gemini_review_markdown_fenced_json(mock_genai_env: MagicMock) -> None:
     adapter = GeminiReviewerAdapter(api_key="test-key")
     mock_client = MagicMock()
     mock_response = MagicMock()
@@ -113,7 +132,7 @@ def test_gemini_review_markdown_fenced_json() -> None:
     assert len(result.candidate_findings) == 0
 
 
-def test_gemini_review_api_call_failure_redacts_key() -> None:
+def test_gemini_review_api_call_failure_redacts_key(mock_genai_env: MagicMock) -> None:
     adapter = GeminiReviewerAdapter(api_key="sensitive-gemini-key")
     mock_client = MagicMock()
     mock_client.models.generate_content.side_effect = RuntimeError(
@@ -127,7 +146,7 @@ def test_gemini_review_api_call_failure_redacts_key() -> None:
     assert "[REDACTED]" in str(exc_info.value)
 
 
-def test_gemini_review_invalid_json() -> None:
+def test_gemini_review_invalid_json(mock_genai_env: MagicMock) -> None:
     adapter = GeminiReviewerAdapter(api_key="test-key")
     mock_client = MagicMock()
     mock_response = MagicMock()
@@ -139,7 +158,7 @@ def test_gemini_review_invalid_json() -> None:
         adapter.review("Analyze")
 
 
-def test_gemini_review_malformed_structure() -> None:
+def test_gemini_review_malformed_structure(mock_genai_env: MagicMock) -> None:
     adapter = GeminiReviewerAdapter(api_key="test-key")
     mock_client = MagicMock()
     mock_response = MagicMock()
