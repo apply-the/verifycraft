@@ -1,4 +1,4 @@
-name: Release to PyPI
+name: Release
 
 on:
   push:
@@ -96,7 +96,7 @@ jobs:
           path: dist/
           if-no-files-found: error
 
-  publish:
+  publish-pypi:
     name: Publish to PyPI
     needs: verify
     runs-on: ubuntu-latest
@@ -114,3 +114,44 @@ jobs:
         uses: pypa/gh-action-pypi-publish@76f52bc884231f62b9a034ebfe128415bbaabdfc # v1.12.4
         with:
           packages-dir: dist/
+
+  publish-github-release:
+    name: Publish to GitHub Releases
+    needs: [verify, publish-pypi]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          fetch-depth: 0
+
+      - name: Download distributions
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
+        with:
+          name: release-distributions
+          path: dist/
+
+      - name: Create GitHub Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG_NAME="${GITHUB_REF_NAME}"
+          NOTES_FILE="docs/releases/${TAG_NAME}-release-notes.md"
+
+          ARGS=(release create "${TAG_NAME}" --title "VerifyCraft ${TAG_NAME}")
+          if [[ "${TAG_NAME}" =~ (a|b|rc)[0-9]+$ ]]; then
+            ARGS+=(--prerelease)
+          fi
+
+          if [[ -f "${NOTES_FILE}" ]]; then
+            ARGS+=(--notes-file "${NOTES_FILE}")
+          else
+            ARGS+=(--generate-notes)
+          fi
+
+          # Attach distribution archives (.whl and .tar.gz)
+          ARGS+=(dist/*)
+
+          gh "${ARGS[@]}"

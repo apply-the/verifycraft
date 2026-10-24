@@ -133,22 +133,20 @@ git push origin v0.1.0
 
 ### Step 4: Monitor the Release Workflow
 
-1. Navigate to **Actions** > **Release to PyPI** on GitHub.
-2. The workflow executes three sequential stages:
+1. Navigate to **Actions** > **Release** on GitHub.
+2. The workflow executes four stages:
    - **`test-matrix`**: Runs pytest across Python 3.11 and Python 3.12 on Linux.
    - **`verify`**: Verifies release ref and `origin/main` HEAD match, checks package metadata and version alignment, runs quality gates (`ruff`, `mypy`, `pytest --cov`, `benchmarks.evaluate`), builds wheel and sdist once, checks distributions with `twine check --strict`, and uploads the `release-distributions` artifact.
-   - **`publish`**: Gated by the `pypi` environment (and maintainer approvals), downloads the verified `release-distributions`, mints an OIDC token, and publishes to PyPI via `pypa/gh-action-pypi-publish`.
+   - **`publish-pypi`**: Gated by the `pypi` environment (and maintainer approvals), downloads the verified `release-distributions`, mints an OIDC token, and publishes to PyPI via `pypa/gh-action-pypi-publish`.
+   - **`publish-github-release`**: Downloads the verified distributions, attaches them as release assets, and automatically creates the GitHub Release using `docs/releases/${TAG}-release-notes.md` (or `--generate-notes` fallback).
 
-### Step 5: Verify Package Installation & Create GitHub Release
+### Step 5: Verify Package Installation
 
 After publication completes:
 ```bash
 # Verify installation from PyPI
 pip install verifycraft==0.1.0
 verifycraft --version
-
-# Create GitHub Release page (distinct from Git tag)
-gh release create v0.1.0 --generate-notes
 ```
 
 ---
