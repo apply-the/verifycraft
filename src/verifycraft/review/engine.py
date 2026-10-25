@@ -46,13 +46,12 @@ class ReviewEngine:
         provider_name: str,
         model: str | None = None,
     ) -> ReviewerModelAdapter | None:
-        """Resolve and initialize the model provider adapter."""
-        if self._injected_adapter is not None:
-            return self._injected_adapter
-
         name = provider_name.lower().strip()
         if name in ("none", "model-free", "agent"):
             return None
+
+        if self._injected_adapter is not None:
+            return self._injected_adapter
         elif name in ("deterministic", "fake"):
             return DeterministicReviewerAdapter()
         elif name == "gemini":
@@ -253,21 +252,33 @@ class ReviewEngine:
                 line=cand.line,
                 changed_files=context.changed_files,
             )
-            desc = cand.description
+            orig_evidence = cand.evidence_status
+            evidence_status = orig_evidence
+            notes: list[str] = []
             if f_reason:
-                desc = f"{desc}\n\n*(Note: {f_reason})*"
+                notes.append(f"*(Note: {f_reason})*")
 
-            # Grounding validation: do not claim independent empirical verification
-            # unless verified by actual test execution.
-            evidence_status = cand.evidence_status
-            if evidence_status == EvidenceStatus.EMPIRICALLY_VERIFIED:
-                evidence_status = EvidenceStatus.STATIC_ANALYZED
+            if orig_evidence in (
+                EvidenceStatus.EMPIRICALLY_VERIFIED,
+                EvidenceStatus.STATIC_ANALYZED,
+            ):
+                evidence_status = EvidenceStatus.UNVERIFIED
+                notes.append(
+                    f"*(Evidence status downgraded: claimed '{orig_evidence.value}' without "
+                    f"authenticated proof; normalized to 'unverified')*"
+                )
+
+            notes.append(f"*(Provenance: candidate ID '{cand.id}')*")
+            desc = f"{cand.description}\n\n" + "\n\n".join(notes)
+
+            v_end_line = cand.end_line if v_line is not None else None
 
             findings.append(
                 cand.model_copy(
                     update={
                         "id": f"rev-{counter:03d}",
                         "line": v_line,
+                        "end_line": v_end_line,
                         "description": desc,
                         "evidence_status": evidence_status,
                     }
@@ -423,11 +434,30 @@ class ReviewEngine:
 
         return any(tok in diff_lower or tok in changed_files_str for tok in meaningful_tokens)
 
+    def _has_valid_source_location(self, locations: list[str], context: GitReviewContext) -> bool:
+        """Check if at least one location cites a valid file in the review context."""
+        if not locations:
+            return False
+        for loc in locations:
+            file_part = loc.split(":")[0].strip()
+            if (
+                file_part in context.changed_files
+                or file_part in context.related_files
+                or any(
+                    k.endswith(f"/{file_part}") or file_part.endswith(f"/{k}")
+                    for k in context.changed_files
+                )
+            ):
+                return True
+        return False
+
     def _assess_from_provider(
         self,
         raw_a: RawRequirementAssessment,
         req_id: str,
         is_relevant: bool,
+        context: GitReviewContext,
+        has_violating_findings: bool = False,
     ) -> tuple[RequirementStatus, str]:
         """Validate and normalize provider-supplied requirement assessment."""
         try:
@@ -435,20 +465,37 @@ class ReviewEngine:
         except ValueError:
             raw_status = RequirementStatus.UNCLEAR
 
-        if (
-            raw_status
-            in (
-                RequirementStatus.APPEARS_SATISFIED,
-                RequirementStatus.PARTIALLY_SATISFIED,
-            )
-            and not is_relevant
+        if raw_status in (
+            RequirementStatus.APPEARS_SATISFIED,
+            RequirementStatus.PARTIALLY_SATISFIED,
         ):
-            # Downgrade: provider claimed satisfied without evidence in diff
+            if not is_relevant:
+                return (
+                    RequirementStatus.NOT_ASSESSED,
+                    f"Provider claimed '{raw_a.status}', but no relevant changes or "
+                    f"positive evidence exist in diff context for '{req_id}'.",
+                )
+            if not self._has_valid_source_location(raw_a.related_locations, context):
+                return (
+                    RequirementStatus.UNCLEAR,
+                    f"Provider claimed '{raw_a.status}', but provided no verifiable source "
+                    f"locations or concrete implementation evidence in diff context "
+                    f"for '{req_id}'.",
+                )
+            if not raw_a.explanation or not raw_a.explanation.strip():
+                return (
+                    RequirementStatus.UNCLEAR,
+                    f"Provider claimed '{raw_a.status}', but provided no concrete explanation "
+                    f"of how '{req_id}' is satisfied.",
+                )
+
+        if raw_status == RequirementStatus.NOT_SATISFIED and not has_violating_findings:
             return (
-                RequirementStatus.NOT_ASSESSED,
-                f"Provider claimed '{raw_a.status}', but no relevant changes or "
-                f"positive evidence exist in diff context for '{req_id}'.",
+                RequirementStatus.UNCLEAR,
+                f"Provider suggested non-satisfaction without concrete violating issues "
+                f"for '{req_id}'; marked unclear for clarification.",
             )
+
         return raw_status, raw_a.explanation
 
     def _assess_unexamined_fallback(
@@ -498,7 +545,11 @@ class ReviewEngine:
         # 3. Provider-supplied assessment validated against context
         elif req_id_clean in model_assessments_map:
             status, explanation = self._assess_from_provider(
-                model_assessments_map[req_id_clean], req.id, is_relevant
+                model_assessments_map[req_id_clean],
+                req.id,
+                is_relevant,
+                context,
+                has_violating_findings=bool(violating_findings),
             )
         # 4. Clarification questions or suggestions without explicit provider assessment
         elif clarifying_findings:

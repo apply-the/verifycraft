@@ -274,14 +274,14 @@ def test_counterexample_token_expiration_dismissal() -> None:
         },
         related_files={
             "src/auth_helper.py": (
-                "def check_token_expiration(token):\n    return not token.is_expired()"
+                "def check_token_expiration(token):\n    if token.is_expired(): raise ValueError()"
             ),
         },
     )
     validated, notes = checker.check_compensating_controls([finding], context)
     assert len(validated) == 0
     assert len(notes) == 1
-    assert "verified on execution path" in notes[0]
+    assert "potential compensating check" in notes[0]
 
 
 # ==============================================================================
@@ -670,7 +670,9 @@ def test_review_engine_requirement_satisfied_via_compensating_control(git_repo: 
     f.parent.mkdir(parents=True, exist_ok=True)
     f.write_text("def login(): pass\n")
     h = git_repo / "src" / "auth_helper.py"
-    h.write_text("def check_token_expiration(token): pass\n")
+    h.write_text(
+        "def check_token_expiration(token):\n    if token.is_expired(): raise ValueError()\n"
+    )
     subprocess.run(["git", "add", "."], cwd=git_repo, check=True)
     subprocess.run(["git", "commit", "-m", "init auth"], cwd=git_repo, check=True)
 

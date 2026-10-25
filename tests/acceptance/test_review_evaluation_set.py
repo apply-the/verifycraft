@@ -166,7 +166,10 @@ def test_eval_case_2_valid_compensating_control(tmp_path: Path) -> None:
     report = engine.review(request)
 
     assert len(report.findings) == 0
-    assert any("verified on execution path" in note for note in report.omitted_scope)
+    assert any(
+        "compensating check" in note and "detected in scope" in note
+        for note in report.omitted_scope
+    )
     req_map = {a.requirement_id: a for a in report.requirement_assessments}
     assert req_map["REQ-AUTH-01"].status == RequirementStatus.APPEARS_SATISFIED
 

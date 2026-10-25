@@ -38,6 +38,29 @@ def test_cli_review_help(capsys: pytest.CaptureFixture[str]) -> None:
     assert "--strict" in out
 
 
+def test_cli_review_requirements_file_not_found(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _init_repo(tmp_path)
+    (tmp_path / "mod.py").write_text("def a(): pass\n", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "init"], cwd=tmp_path, check=True, capture_output=True)
+    with pytest.raises(SystemExit) as exc_info:
+        main(
+            [
+                "review",
+                str(tmp_path),
+                "--requirements",
+                "nonexistent_reqs.md",
+                "--provider",
+                "deterministic",
+            ]
+        )
+    assert exc_info.value.code == 1
+    err = capsys.readouterr().err
+    assert "VerifyCraft Requirements Error" in err
+
+
 def test_cli_review_markdown(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     _init_repo(tmp_path)
     f = tmp_path / "mod.py"

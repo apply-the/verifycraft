@@ -5,9 +5,20 @@ from __future__ import annotations
 import ast
 import re
 from collections.abc import Sequence
+from dataclasses import dataclass
 
 from verifycraft.contracts.review import ReviewFinding
 from verifycraft.review.git import GitReviewContext
+
+
+@dataclass(frozen=True)
+class CallInfo:
+    """Metadata for an AST call invocation."""
+
+    func_name: str
+    args: list[str]
+    lineno: int
+    is_statement_expr: bool
 
 
 class CounterexampleChecker:
@@ -16,7 +27,7 @@ class CounterexampleChecker:
     COMPENSATING_PATTERNS = {
         "expiration": [
             re.compile(
-                r"def\s+((?:check_)?(?:token_)?expir\w*|validate_expiration|verify_token)\b",
+                r"def\s+((?:check_)?(?:token_)?expir\w*|validate_expiration|has_expired)\b",
                 re.IGNORECASE,
             ),
             re.compile(r"is_expired\(", re.IGNORECASE),
@@ -68,15 +79,33 @@ class CounterexampleChecker:
                 args.append(a.attr)
         return args
 
-    def _extract_calls(self, scope: ast.AST) -> list[tuple[str, list[str]]]:
-        """Extract function and method calls with identifier argument names from AST scope."""
-        calls: list[tuple[str, list[str]]] = []
+    def _extract_calls(self, scope: ast.AST, max_line: int | None = None) -> list[CallInfo]:
+        """Extract calls with arguments, lineno, and whether call return value is discarded."""
+        parent_map: dict[ast.AST, ast.AST] = {}
+        for p in ast.walk(scope):
+            for ch in ast.iter_child_nodes(p):
+                parent_map[ch] = p
+
+        calls: list[CallInfo] = []
         for node in ast.walk(scope):
             if not isinstance(node, ast.Call):
                 continue
+            lineno = getattr(node, "lineno", 0)
+            if max_line is not None and lineno > max_line:
+                continue
             func_name = self._extract_func_name(node.func)
-            if func_name:
-                calls.append((func_name, self._extract_call_args(node.args)))
+            if not func_name:
+                continue
+            parent = parent_map.get(node)
+            is_stmt_expr = isinstance(parent, ast.Expr)
+            calls.append(
+                CallInfo(
+                    func_name=func_name,
+                    args=self._extract_call_args(node.args),
+                    lineno=lineno,
+                    is_statement_expr=is_stmt_expr,
+                )
+            )
         return calls
 
     def _detect_subject_token(self, finding_text: str) -> str | None:
@@ -88,7 +117,7 @@ class CounterexampleChecker:
         return None
 
     def _is_matching_expiration_call(self, call_name: str) -> bool:
-        """Check if call name represents an expiration or token validation check."""
+        """Check if call name represents an explicit expiration check."""
         lowered = call_name.lower()
         return (
             "is_expired" in lowered
@@ -96,33 +125,82 @@ class CounterexampleChecker:
             or "validate_expiration" in lowered
             or "check_expiration" in lowered
             or "verify_expiration" in lowered
-            or "verify_token" in lowered
+            or "has_expired" in lowered
         )
 
-    def _has_expires_at_check(self, scope: ast.AST, subject_token: str | None = None) -> bool:
-        """Check if AST scope directly compares expires_at on token."""
-        for node in ast.walk(scope):
-            if isinstance(node, ast.Compare):
-                txt = ast.unparse(node)
-                if "expires_at" in txt or "expired" in txt:
-                    if subject_token and subject_token not in txt:
-                        continue
-                    return True
-        return False
+    def _is_matching_expiry_compare(
+        self,
+        node: ast.AST,
+        subject_token: str | None,
+        max_line: int | None,
+    ) -> bool:
+        if not isinstance(node, ast.Compare):
+            return False
+        lineno = getattr(node, "lineno", 0)
+        if max_line is not None and lineno > max_line:
+            return False
+        txt = ast.unparse(node)
+        if "expires_at" not in txt and "expired" not in txt:
+            return False
+        return not subject_token or subject_token in txt
 
-    def _is_if_guard(self, node: ast.If, target_line: int | None) -> bool:
+    def _has_expires_at_check(
+        self,
+        scope: ast.AST,
+        subject_token: str | None = None,
+        max_line: int | None = None,
+    ) -> bool:
+        """Check if AST scope directly compares expires_at on token before max_line."""
+        return any(
+            self._is_matching_expiry_compare(node, subject_token, max_line)
+            for node in ast.walk(scope)
+        )
+
+    def _find_denominator_variable(self, scope: ast.AST, target_line: int | None) -> str | None:
+        """Find the denominator identifier in a division expression at target_line."""
+        for node in ast.walk(scope):
+            if (
+                isinstance(node, ast.BinOp)
+                and isinstance(node.op, (ast.Div, ast.FloorDiv, ast.Mod))
+                and (target_line is None or getattr(node, "lineno", 0) == target_line)
+                and isinstance(node.right, ast.Name)
+            ):
+                return node.right.id
+        for node in ast.walk(scope):
+            if (
+                isinstance(node, ast.BinOp)
+                and isinstance(node.op, (ast.Div, ast.FloorDiv, ast.Mod))
+                and isinstance(node.right, ast.Name)
+            ):
+                return node.right.id
+        return None
+
+    def _is_if_guard(self, node: ast.If, target_line: int | None, denom: str) -> bool:
         if target_line is not None and getattr(node, "lineno", 0) > target_line:
             return False
+        names_in_test = {n.id for n in ast.walk(node.test) if isinstance(n, ast.Name)}
+        if denom not in names_in_test:
+            return False
         txt = ast.unparse(node.test)
-        return any(p in txt for p in ("== 0", "!= 0", "not ", "<= 0", "is 0", "is None"))
+        return any(
+            p in txt for p in ("== 0", "!= 0", "not ", "<= 0", "is 0", "is None", "> 0", "< 0")
+        )
 
-    def _is_assert_guard(self, node: ast.Assert, target_line: int | None) -> bool:
+    def _is_assert_guard(self, node: ast.Assert, target_line: int | None, denom: str) -> bool:
         if target_line is not None and getattr(node, "lineno", 0) > target_line:
+            return False
+        names_in_test = {n.id for n in ast.walk(node.test) if isinstance(n, ast.Name)}
+        if denom not in names_in_test:
             return False
         txt = ast.unparse(node.test)
         return any(p in txt for p in ("!= 0", "> 0", "not None", "is not None"))
 
-    def _is_try_guard(self, node: ast.Try) -> bool:
+    def _is_try_guard(self, node: ast.Try, target_line: int | None) -> bool:
+        if target_line is not None:
+            start = getattr(node, "lineno", 0)
+            end = getattr(node, "end_lineno", start)
+            if not (start <= target_line <= end):
+                return False
         for h in node.handlers:
             h_name = getattr(h.type, "id", "") if h.type else ""
             if h_name in ("ZeroDivisionError", "ArithmeticError", "Exception"):
@@ -130,13 +208,15 @@ class CounterexampleChecker:
         return False
 
     def _has_zero_division_guard(self, scope: ast.AST, target_line: int | None) -> bool:
-        """Check if AST scope contains an explicit guard or handler protecting division."""
+        """Check if AST scope contains an explicit guard protecting division on target variable."""
+        denom = self._find_denominator_variable(scope, target_line)
         for sub in ast.walk(scope):
-            if isinstance(sub, ast.If) and self._is_if_guard(sub, target_line):
-                return True
-            if isinstance(sub, ast.Assert) and self._is_assert_guard(sub, target_line):
-                return True
-            if isinstance(sub, ast.Try) and self._is_try_guard(sub):
+            if denom is not None:
+                if isinstance(sub, ast.If) and self._is_if_guard(sub, target_line, denom):
+                    return True
+                if isinstance(sub, ast.Assert) and self._is_assert_guard(sub, target_line, denom):
+                    return True
+            if isinstance(sub, ast.Try) and self._is_try_guard(sub, target_line):
                 return True
         return False
 
@@ -154,7 +234,7 @@ class CounterexampleChecker:
 
     def _check_related_expiration(
         self,
-        calls: list[tuple[str, list[str]]],
+        calls: list[CallInfo],
         finding: ReviewFinding,
         req_info: str,
         context: GitReviewContext,
@@ -164,30 +244,38 @@ class CounterexampleChecker:
             has_pat = any(p.search(rel_content) for p in self.COMPENSATING_PATTERNS["expiration"])
             if not has_pat:
                 continue
-            for call_name, call_args in calls:
-                if self._matches_call_token(call_name, call_args, subject_token):
-                    return (
-                        f"Candidate issue {finding.id}{req_info} on '{finding.file_path}' "
-                        f"claiming missing expiration was dismissed: call to '{call_name}' "
-                        f"verified on execution path in '{finding.file_path}' "
-                        f"(defined in '{rel_path}')."
-                    )
+            helper_raises = bool(re.search(r"\braise\b", rel_content))
+            for call in calls:
+                if not self._matches_call_token(call.func_name, call.args, subject_token):
+                    continue
+                # If call is a statement expr whose return value is discarded,
+                # it only enforces expiration if the helper actually raises an exception
+                if call.is_statement_expr and not helper_raises:
+                    continue
+                return (
+                    f"Candidate issue {finding.id}{req_info} on '{finding.file_path}' "
+                    f"claiming missing expiration was challenged: potential compensating check "
+                    f"'{call.func_name}' detected in scope (defined in '{rel_path}')."
+                )
         return None
 
     def _check_scope_expiration(
         self,
-        calls: list[tuple[str, list[str]]],
+        calls: list[CallInfo],
         finding: ReviewFinding,
         req_info: str,
         subject_token: str | None,
     ) -> str | None:
-        for call_name, call_args in calls:
-            if self._matches_call_token(call_name, call_args, subject_token):
-                return (
-                    f"Candidate issue {finding.id}{req_info} on '{finding.file_path}' "
-                    f"claiming missing expiration was dismissed: compensating control "
-                    f"'{call_name}' verified in surrounding execution scope."
-                )
+        for call in calls:
+            if not self._matches_call_token(call.func_name, call.args, subject_token):
+                continue
+            if call.is_statement_expr:
+                continue
+            return (
+                f"Candidate issue {finding.id}{req_info} on '{finding.file_path}' "
+                f"claiming missing expiration was challenged: potential compensating check "
+                f"'{call.func_name}' detected in scope."
+            )
         return None
 
     def _check_expiration_compensation(
@@ -214,7 +302,12 @@ class CounterexampleChecker:
             return None
 
         scope = self._find_enclosing_scope(tree, finding.line)
-        calls = self._extract_calls(scope)
+        scope_lineno = getattr(scope, "lineno", None)
+        effective_max_line = (
+            None if (finding.line is not None and finding.line == scope_lineno) else finding.line
+        )
+
+        calls = self._extract_calls(scope, max_line=effective_max_line)
         subject_token = self._detect_subject_token(finding_text)
         req_info = f" ({', '.join(finding.requirement_ids)})" if finding.requirement_ids else ""
 
@@ -228,11 +321,11 @@ class CounterexampleChecker:
         if scope_note:
             return scope_note
 
-        if self._has_expires_at_check(scope, subject_token):
+        if self._has_expires_at_check(scope, subject_token, max_line=effective_max_line):
             return (
                 f"Candidate issue {finding.id}{req_info} on '{finding.file_path}' "
-                "claiming missing expiration was dismissed: expiration comparison "
-                "check verified in scope."
+                "claiming missing expiration was challenged: expiration comparison "
+                "check detected in scope."
             )
 
         return None
@@ -263,7 +356,7 @@ class CounterexampleChecker:
             req_info = f" ({', '.join(finding.requirement_ids)})" if finding.requirement_ids else ""
             return (
                 f"Candidate issue {finding.id}{req_info} on '{finding.file_path}' "
-                "claiming unhandled zero division was dismissed: guard check found "
+                "claiming unhandled zero division was challenged: guard check found "
                 "protecting division in scope."
             )
 

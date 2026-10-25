@@ -317,6 +317,83 @@ class GitContextCollector:
 
         return related
 
+    def _truncate_diff(self, diff_text: str, max_diff_lines: int, omitted_scope: list[str]) -> str:
+        diff_lines = diff_text.splitlines()
+        diff_lines_count = len(diff_lines)
+        if diff_lines_count > max_diff_lines:
+            omitted_scope.append(
+                f"Diff truncated: {diff_lines_count} lines exceeded limit of {max_diff_lines} lines"
+            )
+            return "\n".join(diff_lines[:max_diff_lines])
+        return diff_text
+
+    def _truncate_files(
+        self,
+        changed_files: dict[str, ChangedFile],
+        max_files: int,
+        omitted_scope: list[str],
+    ) -> dict[str, ChangedFile]:
+        if len(changed_files) <= max_files:
+            return changed_files
+        all_keys = list(changed_files.keys())
+        retained_keys = all_keys[:max_files]
+        omitted_keys = all_keys[max_files:]
+        omitted_str = ", ".join(omitted_keys)
+        omitted_scope.append(
+            f"Files truncated: {len(all_keys)} files exceeded limit of "
+            f"{max_files} (omitted: {omitted_str})"
+        )
+        return {k: changed_files[k] for k in retained_keys}
+
+    def _populate_file_contents(
+        self,
+        changed_files: dict[str, ChangedFile],
+        head_revision: str,
+        max_context_bytes: int,
+        omitted_scope: list[str],
+    ) -> int:
+        total_bytes = 0
+        for path, cfile in changed_files.items():
+            if cfile.status == "deleted":
+                continue
+            content = self.read_file_at_ref(path, head_revision)
+            if content is not None:
+                encoded_len = len(content.encode("utf-8"))
+                if total_bytes + encoded_len <= max_context_bytes:
+                    cfile.content = content
+                    total_bytes += encoded_len
+                else:
+                    omitted_scope.append(
+                        f"Content for '{path}' omitted due to context size limits."
+                    )
+        return total_bytes
+
+    def _check_worktree_untracked_files(self, omitted_scope: list[str]) -> None:
+        try:
+            untracked_out = self._run_git(["ls-files", "--others", "--exclude-standard"])
+            untracked_files = [f.strip() for f in untracked_out.splitlines() if f.strip()]
+            if untracked_files:
+                untracked_summary = ", ".join(untracked_files[:5])
+                more = f" and {len(untracked_files) - 5} more" if len(untracked_files) > 5 else ""
+                omitted_scope.append(
+                    f"WORKTREE mode limitation: {len(untracked_files)} untracked file(s) "
+                    f"omitted from review ({untracked_summary}{more}). "
+                    "Track with 'git add' to include."
+                )
+        except GitError:
+            pass
+
+    def _record_worktree_scope(self, head_revision: str, omitted_scope: list[str]) -> bool:
+        is_working_tree = head_revision.upper() in ("WORKTREE", "WORKING_TREE")
+        if is_working_tree:
+            omitted_scope.append(
+                "WORKTREE mode active: review inspects working tree state relative to base "
+                "revision; unstaged and staged modifications are included, but untracked files "
+                "require explicit tracking."
+            )
+            self._check_worktree_untracked_files(omitted_scope)
+        return is_working_tree
+
     def collect(
         self,
         base_revision: str = "main",
@@ -335,43 +412,16 @@ class GitContextCollector:
             if explicit_diff is not None
             else self.get_diff(base_revision, head_revision)
         )
-        diff_lines = diff_text.splitlines()
-        diff_lines_count = len(diff_lines)
-
+        diff_lines_count = len(diff_text.splitlines())
         omitted_scope: list[str] = []
-        if diff_lines_count > max_diff_lines:
-            diff_text = "\n".join(diff_lines[:max_diff_lines])
-            omitted_scope.append(
-                f"Diff truncated: {diff_lines_count} lines exceeded limit of {max_diff_lines} lines"
-            )
+        truncated_diff = self._truncate_diff(diff_text, max_diff_lines, omitted_scope)
 
-        changed_files = self.parse_diff(diff_text)
+        changed_files = self.parse_diff(truncated_diff)
+        changed_files = self._truncate_files(changed_files, max_files, omitted_scope)
 
-        if len(changed_files) > max_files:
-            all_keys = list(changed_files.keys())
-            retained_keys = all_keys[:max_files]
-            omitted_keys = all_keys[max_files:]
-            changed_files = {k: changed_files[k] for k in retained_keys}
-            omitted_str = ", ".join(omitted_keys)
-            omitted_scope.append(
-                f"Files truncated: {len(all_keys)} files exceeded limit of "
-                f"{max_files} (omitted: {omitted_str})"
-            )
-
-        total_bytes = 0
-        for path, cfile in changed_files.items():
-            if cfile.status == "deleted":
-                continue
-            content = self.read_file_at_ref(path, head_revision)
-            if content is not None:
-                encoded_len = len(content.encode("utf-8"))
-                if total_bytes + encoded_len <= max_context_bytes:
-                    cfile.content = content
-                    total_bytes += encoded_len
-                else:
-                    omitted_scope.append(
-                        f"Content for '{path}' omitted due to context size limits."
-                    )
+        total_bytes = self._populate_file_contents(
+            changed_files, head_revision, max_context_bytes, omitted_scope
+        )
 
         related = self.find_related_context(
             changed_files=changed_files,
@@ -381,7 +431,8 @@ class GitContextCollector:
         for r_content in related.values():
             total_bytes += len(r_content.encode("utf-8"))
 
-        is_working_tree = head_revision.upper() in ("WORKTREE", "WORKING_TREE")
+        is_working_tree = self._record_worktree_scope(head_revision, omitted_scope)
+
         return GitReviewContext(
             repo_path=self.repo_path,
             base_revision=base_revision,
@@ -389,7 +440,7 @@ class GitContextCollector:
             base_commit=base_commit,
             head_commit=head_commit,
             changed_files=changed_files,
-            raw_diff=diff_text,
+            raw_diff=truncated_diff,
             related_files=related,
             omitted_scope=omitted_scope,
             diff_lines_count=diff_lines_count,
