@@ -106,7 +106,9 @@ def test_helper_called_on_relevant_path() -> None:
         ),
         related_files={
             "src/token_helper.py": (
-                "def check_token_expiration(token):\n    return not token.is_expired()\n"
+                "def check_token_expiration(token):\n"
+                "    if token.is_expired():\n"
+                "        raise ValueError('Token expired')\n"
             )
         },
     )
@@ -116,7 +118,7 @@ def test_helper_called_on_relevant_path() -> None:
     assert len(notes) == 1
     assert "f-auth-02" in notes[0]
     assert "REQ-AUTH-01" in notes[0]
-    assert "call to 'check_token_expiration' verified on execution path" in notes[0]
+    assert "potential compensating check 'check_token_expiration' detected in scope" in notes[0]
 
 
 def test_helper_checks_different_token_or_condition() -> None:
@@ -194,7 +196,7 @@ def test_compensating_logic_exists_in_unchanged_code() -> None:
     assert len(validated) == 0
     assert len(notes) == 1
     assert "f-auth-04" in notes[0]
-    assert "expiration comparison check verified in scope" in notes[0]
+    assert "expiration comparison check detected in scope" in notes[0]
 
 
 def test_evidence_is_insufficient_to_decide() -> None:
@@ -321,7 +323,8 @@ def test_attribute_method_calls_and_expires_at_subject_mismatch() -> None:
         target_content=(
             "class Auth:\n"
             "    def verify(self):\n"
-            "        self.validator.check_token_expiration(self.token)\n"
+            "        if not self.validator.check_token_expiration(self.token):\n"
+            "            raise ExpiredTokenError()\n"
             "        return True\n"
         )
     )

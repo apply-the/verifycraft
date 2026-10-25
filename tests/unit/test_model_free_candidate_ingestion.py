@@ -90,8 +90,10 @@ def test_sdk_model_free_candidate_ingestion(repo_with_change: Path) -> None:
     f = report.findings[0]
     assert f.file_path == "calculator.py"
     assert f.line == 3
-    # Verifies conservative grounding normalization
-    assert f.evidence_status == EvidenceStatus.STATIC_ANALYZED
+    # Verifies conservative grounding normalization to UNVERIFIED
+    assert f.evidence_status == EvidenceStatus.UNVERIFIED
+    assert "Evidence status downgraded" in f.description
+    assert "agent-01" in f.description
     assert f.blocking is True
 
     # Associated requirement is marked NOT_SATISFIED due to the unresolved issue

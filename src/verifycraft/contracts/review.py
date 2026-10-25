@@ -443,8 +443,12 @@ class ReviewReport(BaseModel):
             sections.extend(
                 [
                     "## Omitted Scope",
+                    (
+                        "*(Notice: Review scope is partial/incomplete due to budget limits, "
+                        "untracked files, or context boundaries; this review is not exhaustive.)*"
+                    ),
                     "",
-                    "Contexts omitted due to budget limits or unsupported types:",
+                    "Contexts omitted or challenged during review:",
                     "",
                 ]
             )

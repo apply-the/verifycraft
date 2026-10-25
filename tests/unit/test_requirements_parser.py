@@ -52,3 +52,24 @@ def test_requirements_parser_missing_file() -> None:
     parser = RequirementsParser()
     with pytest.raises(FileNotFoundError):
         parser.parse_file("nonexistent_reqs.md")
+
+
+def test_requirements_parser_parse_all_missing_file_raises() -> None:
+    parser = RequirementsParser()
+    with pytest.raises(FileNotFoundError, match="Requirements file not found: docs/missing.md"):
+        parser.parse_all(["docs/missing.md"])
+
+
+def test_requirements_parser_parse_all_inline_prefixes() -> None:
+    parser = RequirementsParser()
+    reqs = parser.parse_all(
+        [
+            "inline:[REQ-AUTH-01] Passwords must be hashed",
+            "text:Requirement REQ-AUTH-02: Rate limits shall be enforced",
+        ]
+    )
+    assert len(reqs) == 2
+    assert reqs[0].id == "REQ-AUTH-01"
+    assert reqs[0].source_file == "inline"
+    assert reqs[1].id == "REQ-AUTH-02"
+    assert reqs[1].source_file == "inline"
