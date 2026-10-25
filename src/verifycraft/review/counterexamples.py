@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 import re
+from collections.abc import Sequence
 
 from verifycraft.contracts.review import ReviewFinding
 from verifycraft.review.git import GitReviewContext
@@ -50,29 +51,32 @@ class CounterexampleChecker:
                     enclosing = node
         return enclosing if enclosing is not None else tree
 
+    def _extract_func_name(self, func_node: ast.AST) -> str:
+        if isinstance(func_node, ast.Name):
+            return func_node.id
+        if isinstance(func_node, ast.Attribute):
+            val = getattr(func_node.value, "id", "")
+            return f"{val}.{func_node.attr}" if val else func_node.attr
+        return ""
+
+    def _extract_call_args(self, call_args: Sequence[ast.expr]) -> list[str]:
+        args: list[str] = []
+        for a in call_args:
+            if isinstance(a, ast.Name):
+                args.append(a.id)
+            elif isinstance(a, ast.Attribute):
+                args.append(a.attr)
+        return args
+
     def _extract_calls(self, scope: ast.AST) -> list[tuple[str, list[str]]]:
         """Extract function and method calls with identifier argument names from AST scope."""
         calls: list[tuple[str, list[str]]] = []
         for node in ast.walk(scope):
             if not isinstance(node, ast.Call):
                 continue
-
-            func_name = ""
-            if isinstance(node.func, ast.Name):
-                func_name = node.func.id
-            elif isinstance(node.func, ast.Attribute):
-                val = getattr(node.func.value, "id", "")
-                func_name = f"{val}.{node.func.attr}" if val else node.func.attr
-
-            args: list[str] = []
-            for a in node.args:
-                if isinstance(a, ast.Name):
-                    args.append(a.id)
-                elif isinstance(a, ast.Attribute):
-                    args.append(a.attr)
-
+            func_name = self._extract_func_name(node.func)
             if func_name:
-                calls.append((func_name, args))
+                calls.append((func_name, self._extract_call_args(node.args)))
         return calls
 
     def _detect_subject_token(self, finding_text: str) -> str | None:
@@ -106,26 +110,34 @@ class CounterexampleChecker:
                     return True
         return False
 
+    def _is_if_guard(self, node: ast.If, target_line: int | None) -> bool:
+        if target_line is not None and getattr(node, "lineno", 0) > target_line:
+            return False
+        txt = ast.unparse(node.test)
+        return any(p in txt for p in ("== 0", "!= 0", "not ", "<= 0", "is 0", "is None"))
+
+    def _is_assert_guard(self, node: ast.Assert, target_line: int | None) -> bool:
+        if target_line is not None and getattr(node, "lineno", 0) > target_line:
+            return False
+        txt = ast.unparse(node.test)
+        return any(p in txt for p in ("!= 0", "> 0", "not None", "is not None"))
+
+    def _is_try_guard(self, node: ast.Try) -> bool:
+        for h in node.handlers:
+            h_name = getattr(h.type, "id", "") if h.type else ""
+            if h_name in ("ZeroDivisionError", "ArithmeticError", "Exception"):
+                return True
+        return False
+
     def _has_zero_division_guard(self, scope: ast.AST, target_line: int | None) -> bool:
         """Check if AST scope contains an explicit guard or handler protecting division."""
         for sub in ast.walk(scope):
-            if isinstance(sub, ast.If):
-                txt = ast.unparse(sub.test)
-                if any(p in txt for p in ("== 0", "!= 0", "not ", "<= 0", "is 0", "is None")) and (
-                    target_line is None or getattr(sub, "lineno", 0) <= target_line
-                ):
-                    return True
-            elif isinstance(sub, ast.Assert):
-                txt = ast.unparse(sub.test)
-                if any(p in txt for p in ("!= 0", "> 0", "not None", "is not None")) and (
-                    target_line is None or getattr(sub, "lineno", 0) <= target_line
-                ):
-                    return True
-            elif isinstance(sub, ast.Try):
-                for h in sub.handlers:
-                    h_name = getattr(h.type, "id", "") if h.type else ""
-                    if h_name in ("ZeroDivisionError", "ArithmeticError", "Exception"):
-                        return True
+            if isinstance(sub, ast.If) and self._is_if_guard(sub, target_line):
+                return True
+            if isinstance(sub, ast.Assert) and self._is_assert_guard(sub, target_line):
+                return True
+            if isinstance(sub, ast.Try) and self._is_try_guard(sub):
+                return True
         return False
 
     def _matches_call_token(

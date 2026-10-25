@@ -289,6 +289,29 @@ def _execute_verify(args: argparse.Namespace) -> None:
     sys.exit(VERDICT_EXIT_CODES.get(result.verdict, 1))
 
 
+def _extract_candidate_items(raw: Any) -> list[Any]:
+    if isinstance(raw, list):
+        return raw
+    if isinstance(raw, dict):
+        if "candidate_findings" in raw and isinstance(raw["candidate_findings"], list):
+            return raw["candidate_findings"]
+        if "findings" in raw and isinstance(raw["findings"], list):
+            return raw["findings"]
+        return [raw]
+    raise ValueError("JSON content must be a list or object containing findings")
+
+
+def _parse_candidate_findings(items: list[Any]) -> list[ReviewFinding]:
+    findings: list[ReviewFinding] = []
+    for idx, item in enumerate(items):
+        if not isinstance(item, dict):
+            continue
+        if "id" not in item:
+            item["id"] = f"cand-{idx + 1:03d}"
+        findings.append(ReviewFinding.model_validate(item))
+    return findings
+
+
 def _load_candidates_from_file(candidates_path_arg: Path) -> list[ReviewFinding]:
     path = candidates_path_arg.resolve()
     if not path.is_file():
@@ -296,27 +319,8 @@ def _load_candidates_from_file(candidates_path_arg: Path) -> list[ReviewFinding]
         sys.exit(1)
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
-        items: list[Any] = []
-        if isinstance(raw, list):
-            items = raw
-        elif isinstance(raw, dict):
-            if "candidate_findings" in raw and isinstance(raw["candidate_findings"], list):
-                items = raw["candidate_findings"]
-            elif "findings" in raw and isinstance(raw["findings"], list):
-                items = raw["findings"]
-            else:
-                items = [raw]
-        else:
-            raise ValueError("JSON content must be a list or object containing findings")
-
-        findings: list[ReviewFinding] = []
-        for idx, item in enumerate(items):
-            if not isinstance(item, dict):
-                continue
-            if "id" not in item:
-                item["id"] = f"cand-{idx + 1:03d}"
-            findings.append(ReviewFinding.model_validate(item))
-        return findings
+        items = _extract_candidate_items(raw)
+        return _parse_candidate_findings(items)
     except Exception as e:
         print(f"Error parsing candidate findings JSON: {e}", file=sys.stderr)
         sys.exit(1)
