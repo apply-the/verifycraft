@@ -152,21 +152,35 @@ verifycraft review . \
 
 | Argument | Description | Default |
 | :--- | :--- | :--- |
-| `repo` | Path to git repository (positional) | `.` |
+| `path` | Path to git repository (positional) | `.` |
 | `--base` | Base git revision, branch, or commit | `main` |
 | `--head` | Head git revision, branch, or commit | `HEAD` |
-| `--requirements` | Optional path to markdown or text requirement document | None |
-| `--provider` | Review provider adapter (`gemini`, `deterministic`) | `gemini` |
-| `--model` | Model name override for LLM provider | `gemini-2.5-pro` |
+| `--requirements` | Path to requirement document or text (repeatable) | None |
+| `--candidates` | Path to JSON file containing candidate findings for model-free review | None |
+| `--provider` | Review provider adapter (`gemini`, `deterministic`, `none`). Explicit provider or `--candidates` required | None |
+| `--model` | Model name override for LLM provider (e.g. `gemini-2.5-pro`) | `gemini-2.5-flash` |
 | `--format` | Output format: `markdown`, `json`, `comments` | `markdown` |
-| `--strict` | Fail closed (exit code 1) on blocking issues or unsatisfied requirements | Disabled |
+| `--strict` | Exit with code 2 if any blocking issues are reported | Disabled |
+| `--timeout` | Review timeout in seconds | `60.0` |
+
+### Model-Free Candidate Ingestion
+
+Host coding agents can supply structured candidate findings directly without requiring a secondary LLM:
+
+```bash
+# Ingest candidate findings from host agent and run full review pipeline
+verifycraft review . \
+  --base main \
+  --head HEAD \
+  --candidates findings.json \
+  --format comments
+```
 
 ### Review Python SDK Quickstart
 
 The Python SDK exposes `ReviewEngine`, sharing the exact same pipeline and contracts:
 
 ```python
-from pathlib import Path
 from verifycraft import (
     ReviewEngine,
     ReviewPolicy,
@@ -175,38 +189,30 @@ from verifycraft import (
 
 # 1. Configure the review request
 request = ReviewRequest(
-    repo_path=Path("."),
+    repo_path=".",
     base_revision="main",
     head_revision="HEAD",
-    requirements_path=Path("docs/auth.md"),  # Optional
-    provider="gemini",  # or "deterministic"
-    model_name="gemini-2.5-pro",
+    requirements=["docs/auth.md"],  # Optional
+    provider="gemini",  # or "deterministic", "none"
+    model="gemini-2.5-pro",
+    policy=ReviewPolicy(timeout_seconds=60.0),
 )
 
-# 2. Configure review resource and safety policy
-policy = ReviewPolicy(
-    max_changed_files=50,
-    max_total_diff_bytes=200_000,
-    max_surrounding_lines=150,
-    timeout_seconds=60.0,
-    require_explicit_remote_provider=True,
-)
-
-# 3. Execute semantic review
+# 2. Execute semantic review
 engine = ReviewEngine()
-report = engine.review(request, policy=policy)
+report = engine.review(request)
 
-# 4. Access structured results
+# 3. Access structured results
 print(f"Summary: {report.summary}")
 print(f"Total Findings: {len(report.findings)}")
 for req in report.requirement_assessments:
-    print(f"[{req.requirement_id}] {req.status.value}: {req.rationale}")
+    print(f"[{req.requirement_id}] {req.status.value}: {req.explanation}")
 
-# 5. Output Conventional Comments (e.g. for PR comments)
+# 4. Output Conventional Comments (e.g. for PR comments)
 print("\n--- Conventional Comments ---")
 print(report.to_conventional_comments())
 
-# 6. Or output full Markdown / JSON
+# 5. Or output full Markdown / JSON
 print("\n--- Markdown Report ---")
 print(report.to_markdown())
 ```

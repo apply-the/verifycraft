@@ -146,10 +146,14 @@ def test_git_read_file_at_ref_fallback(git_repo: Path) -> None:
     local_file = git_repo / "local.py"
     local_file.write_text("content on disk", encoding="utf-8")
 
-    # When git show fails, reads from local disk
+    # When ref is a commit and git show fails, must NOT fall back to disk
     with patch.object(collector, "_run_git", side_effect=GitError("show failed")):
         content = collector.read_file_at_ref("local.py", "HEAD")
-        assert content == "content on disk"
+        assert content is None
+
+    # Only when ref is WORKTREE does it read from disk
+    content_worktree = collector.read_file_at_ref("local.py", "WORKTREE")
+    assert content_worktree == "content on disk"
 
 
 def test_git_read_file_at_ref_local_oserror(git_repo: Path) -> None:
@@ -157,11 +161,8 @@ def test_git_read_file_at_ref_local_oserror(git_repo: Path) -> None:
     local_file = git_repo / "unreadable.py"
     local_file.write_text("data", encoding="utf-8")
 
-    with (
-        patch.object(collector, "_run_git", side_effect=GitError("show failed")),
-        patch("builtins.open", side_effect=OSError("Read permission denied")),
-    ):
-        assert collector.read_file_at_ref("unreadable.py", "HEAD") is None
+    with patch("builtins.open", side_effect=OSError("Read permission denied")):
+        assert collector.read_file_at_ref("unreadable.py", "WORKTREE") is None
 
 
 def test_git_find_related_context_standard_import(git_repo: Path) -> None:
@@ -216,7 +217,7 @@ def test_counterexample_zero_division_guard() -> None:
     finding = ReviewFinding(
         id="f-01",
         file_path="src/math_ops.py",
-        line=10,
+        line=4,
         label=ConventionalLabel.ISSUE,
         subject="Zero division vulnerability in denominator",
         description="Division by zero if denominator is 0",
@@ -242,7 +243,7 @@ def test_counterexample_zero_division_guard() -> None:
     validated, notes = checker.check_compensating_controls([finding], context)
     assert len(validated) == 0
     assert len(notes) == 1
-    assert "guard check found in surrounding file context" in notes[0]
+    assert "protecting division in scope" in notes[0]
 
 
 def test_counterexample_token_expiration_dismissal() -> None:
@@ -250,7 +251,7 @@ def test_counterexample_token_expiration_dismissal() -> None:
     finding = ReviewFinding(
         id="f-01",
         file_path="src/auth.py",
-        line=10,
+        line=2,
         label=ConventionalLabel.ISSUE,
         subject="Missing token expiration check",
         description="The handler omits token expiry verification",
@@ -268,7 +269,7 @@ def test_counterexample_token_expiration_dismissal() -> None:
             "src/auth.py": ChangedFile(
                 path="src/auth.py",
                 status="modified",
-                content="def login(): pass",
+                content="def login(token):\n    check_token_expiration(token)\n",
             )
         },
         related_files={
@@ -280,7 +281,7 @@ def test_counterexample_token_expiration_dismissal() -> None:
     validated, notes = checker.check_compensating_controls([finding], context)
     assert len(validated) == 0
     assert len(notes) == 1
-    assert "compensating control found in 'src/auth_helper.py'" in notes[0]
+    assert "verified on execution path" in notes[0]
 
 
 # ==============================================================================
@@ -345,7 +346,8 @@ def test_review_engine_unassessed_requirement_fallback(git_repo: Path) -> None:
 
     req_map = {a.requirement_id: a for a in report.requirement_assessments}
     assert req_map["REQ-01"].status == RequirementStatus.NOT_SATISFIED
-    assert req_map["REQ-02"].status == RequirementStatus.APPEARS_SATISFIED
+    assert req_map["REQ-02"].status == RequirementStatus.NOT_ASSESSED
+    assert "not assessed" in req_map["REQ-02"].explanation.lower()
 
 
 def test_review_engine_invalid_model_requirement_status(git_repo: Path) -> None:
@@ -672,8 +674,12 @@ def test_review_engine_requirement_satisfied_via_compensating_control(git_repo: 
     subprocess.run(["git", "add", "."], cwd=git_repo, check=True)
     subprocess.run(["git", "commit", "-m", "init auth"], cwd=git_repo, check=True)
 
-    f.write_text("from auth_helper import check_token_expiration\ndef login(): pass\n")
-    subprocess.run(["git", "commit", "-am", "import helper"], cwd=git_repo, check=True)
+    f.write_text(
+        "from auth_helper import check_token_expiration\n"
+        "def login(token):\n"
+        "    check_token_expiration(token)\n"
+    )
+    subprocess.run(["git", "commit", "-am", "import and call helper"], cwd=git_repo, check=True)
 
     req_file = git_repo / "reqs.md"
     req_file.write_text("[REQ-EXP-01] Token must expire.\n")

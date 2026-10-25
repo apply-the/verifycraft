@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import time
 from typing import Any
 
@@ -40,19 +41,26 @@ class ReviewEngine:
         self.requirements_parser = RequirementsParser()
         self.counterexample_checker = CounterexampleChecker()
 
-    def _get_adapter(self, provider_name: str) -> ReviewerModelAdapter:
+    def _get_adapter(
+        self,
+        provider_name: str,
+        model: str | None = None,
+    ) -> ReviewerModelAdapter | None:
         """Resolve and initialize the model provider adapter."""
         if self._injected_adapter is not None:
             return self._injected_adapter
 
         name = provider_name.lower().strip()
-        if name in ("deterministic", "fake"):
+        if name in ("none", "model-free", "agent"):
+            return None
+        elif name in ("deterministic", "fake"):
             return DeterministicReviewerAdapter()
         elif name == "gemini":
-            return GeminiReviewerAdapter()
+            return GeminiReviewerAdapter(model_name=model)
         else:
             raise ProviderConfigurationError(
-                f"Unsupported provider: '{provider_name}'. Supported: 'gemini', 'deterministic'."
+                f"Unsupported provider: '{provider_name}'. "
+                "Supported: 'gemini', 'deterministic', 'none'."
             )
 
     def review(self, request: ReviewRequest) -> ReviewReport:
@@ -60,7 +68,7 @@ class ReviewEngine:
         start_time = time.monotonic()
 
         # 1. Validate and resolve reviewer model adapter early
-        adapter = self._get_adapter(request.provider)
+        adapter = self._get_adapter(request.provider, model=request.model)
 
         # 2. Collect Git context
         collector = GitContextCollector(request.repo_path)
@@ -81,14 +89,23 @@ class ReviewEngine:
                 repo_root=request.repo_path,
             )
 
-        # 4. Prepare Prompt
-        prompt = self._build_prompt(context=context, requirements=parsed_reqs)
-
-        # 5. Invoke Reviewer Model
-        provider_resp = adapter.review(
-            prompt=prompt,
-            timeout_seconds=request.policy.timeout_seconds,
-        )
+        # 4. Invoke Reviewer Model or Model-Free Ingestion
+        if adapter is None:
+            provider_resp = ProviderResponse(
+                summary=(
+                    f"Model-free review processed {len(request.candidate_findings)} "
+                    "candidate finding(s)."
+                ),
+                candidate_findings=[],
+                requirement_assessments=[],
+                tokens_used=0,
+            )
+        else:
+            prompt = self._build_prompt(context=context, requirements=parsed_reqs)
+            provider_resp = adapter.review(
+                prompt=prompt,
+                timeout_seconds=request.policy.timeout_seconds,
+            )
 
         # 5. Process and Validate Candidate Findings
         findings = self._process_candidate_findings(
@@ -114,6 +131,7 @@ class ReviewEngine:
             provider_resp=provider_resp,
             deduped_findings=deduped_findings,
             dismissal_notes=dismissal_notes,
+            context=context,
         )
 
         # 9. Compute Resource Usage
@@ -126,9 +144,14 @@ class ReviewEngine:
             tokens_used=provider_resp.tokens_used,
         )
 
+        resolved_model_name = getattr(
+            adapter,
+            "model_name",
+            request.model or ("model-free" if adapter is None else "deterministic"),
+        )
         model_info = ModelInfo(
             provider=request.provider,
-            model_name=getattr(adapter, "model_name", "deterministic"),
+            model_name=resolved_model_name,
         )
 
         return ReviewReport(
@@ -137,6 +160,7 @@ class ReviewEngine:
             head_revision=context.head_revision,
             base_commit=context.base_commit,
             head_commit=context.head_commit,
+            is_working_tree=context.is_working_tree,
             findings=deduped_findings,
             requirement_assessments=assessments,
             summary=provider_resp.summary,
@@ -215,6 +239,15 @@ class ReviewEngine:
                 counter += 1
 
         for cand in request.candidate_findings:
+            if (
+                cand.file_path not in context.changed_files
+                and cand.file_path not in context.related_files
+            ):
+                context.omitted_scope.append(
+                    f"Candidate finding on untouched file '{cand.file_path}' was discarded."
+                )
+                continue
+
             v_line, f_reason = collector.validate_line_anchor(
                 file_path=cand.file_path,
                 line=cand.line,
@@ -224,12 +257,19 @@ class ReviewEngine:
             if f_reason:
                 desc = f"{desc}\n\n*(Note: {f_reason})*"
 
+            # Grounding validation: do not claim independent empirical verification
+            # unless verified by actual test execution.
+            evidence_status = cand.evidence_status
+            if evidence_status == EvidenceStatus.EMPIRICALLY_VERIFIED:
+                evidence_status = EvidenceStatus.STATIC_ANALYZED
+
             findings.append(
                 cand.model_copy(
                     update={
                         "id": f"rev-{counter:03d}",
                         "line": v_line,
                         "description": desc,
+                        "evidence_status": evidence_status,
                     }
                 )
             )
@@ -247,30 +287,229 @@ class ReviewEngine:
                 deduped.append(f)
         return deduped
 
+    STOP_WORDS = {
+        "this",
+        "that",
+        "with",
+        "from",
+        "have",
+        "must",
+        "should",
+        "shall",
+        "will",
+        "would",
+        "could",
+        "about",
+        "above",
+        "after",
+        "again",
+        "against",
+        "all",
+        "and",
+        "any",
+        "are",
+        "aren't",
+        "because",
+        "been",
+        "before",
+        "being",
+        "below",
+        "between",
+        "both",
+        "but",
+        "can",
+        "cannot",
+        "couldn't",
+        "did",
+        "didn't",
+        "does",
+        "doesn't",
+        "doing",
+        "don't",
+        "down",
+        "during",
+        "each",
+        "few",
+        "for",
+        "further",
+        "had",
+        "hadn't",
+        "has",
+        "hasn't",
+        "haven't",
+        "having",
+        "here",
+        "how",
+        "into",
+        "more",
+        "most",
+        "need",
+        "only",
+        "other",
+        "ought",
+        "our",
+        "ours",
+        "ourselves",
+        "out",
+        "over",
+        "own",
+        "same",
+        "shan't",
+        "she",
+        "shouldn't",
+        "some",
+        "such",
+        "than",
+        "the",
+        "their",
+        "theirs",
+        "them",
+        "themselves",
+        "then",
+        "there",
+        "these",
+        "they",
+        "those",
+        "through",
+        "under",
+        "until",
+        "very",
+        "was",
+        "wasn't",
+        "were",
+        "weren't",
+        "what",
+        "when",
+        "where",
+        "which",
+        "while",
+        "who",
+        "whom",
+        "why",
+        "won't",
+        "wouldn't",
+        "you",
+        "your",
+        "yours",
+        "yourself",
+        "yourselves",
+        "code",
+        "file",
+        "test",
+        "function",
+        "system",
+        "implementation",
+        "require",
+        "required",
+    }
+
+    def _is_requirement_relevant_to_context(
+        self,
+        req: ParsedRequirement,
+        context: GitReviewContext,
+    ) -> bool:
+        """Check whether changes in unified diff touch the requirement's domain or keywords."""
+        if not context.raw_diff or not context.raw_diff.strip():
+            return False
+
+        # Extract tokens from requirement text and ID
+        tokens = re.findall(r"\w{3,}", f"{req.id} {req.text}".lower())
+        meaningful_tokens = [t for t in tokens if t not in self.STOP_WORDS]
+        if not meaningful_tokens:
+            return False
+
+        diff_lower = context.raw_diff.lower()
+        changed_files_str = " ".join(context.changed_files.keys()).lower()
+
+        return any(tok in diff_lower or tok in changed_files_str for tok in meaningful_tokens)
+
+    def _assess_from_provider(
+        self,
+        raw_a: RawRequirementAssessment,
+        req_id: str,
+        is_relevant: bool,
+    ) -> tuple[RequirementStatus, str]:
+        """Validate and normalize provider-supplied requirement assessment."""
+        try:
+            raw_status = RequirementStatus(raw_a.status.lower())
+        except ValueError:
+            raw_status = RequirementStatus.UNCLEAR
+
+        if (
+            raw_status
+            in (
+                RequirementStatus.APPEARS_SATISFIED,
+                RequirementStatus.PARTIALLY_SATISFIED,
+            )
+            and not is_relevant
+        ):
+            # Downgrade: provider claimed satisfied without evidence in diff
+            return (
+                RequirementStatus.NOT_ASSESSED,
+                f"Provider claimed '{raw_a.status}', but no relevant changes or "
+                f"positive evidence exist in diff context for '{req_id}'.",
+            )
+        return raw_status, raw_a.explanation
+
+    def _assess_unexamined_fallback(
+        self,
+        req_id: str,
+        is_relevant: bool,
+    ) -> tuple[RequirementStatus, str]:
+        """Produce safe fallback for requirements not explicitly assessed."""
+        if is_relevant:
+            return (
+                RequirementStatus.UNCLEAR,
+                f"Changes touch components related to '{req_id}', but positive "
+                "evidence demonstrating requirement satisfaction was not established.",
+            )
+        return (
+            RequirementStatus.NOT_ASSESSED,
+            f"Requirement '{req_id}' not assessed: no relevant changes in diff context.",
+        )
+
     def _assess_single_requirement(
         self,
         req: ParsedRequirement,
         model_assessments_map: dict[str, RawRequirementAssessment],
         deduped_findings: list[ReviewFinding],
         dismissal_notes: list[str],
+        context: GitReviewContext,
     ) -> RequirementAssessment:
         req_id_clean = req.id.upper()
-        if req_id_clean in model_assessments_map:
-            raw_a = model_assessments_map[req_id_clean]
-            try:
-                status = RequirementStatus(raw_a.status.lower())
-            except ValueError:
-                status = RequirementStatus.UNCLEAR
-            explanation = raw_a.explanation
+        all_related_findings = [f for f in deduped_findings if req.id in f.requirement_ids]
+        violating_findings = [
+            f for f in all_related_findings if f.label == ConventionalLabel.ISSUE or f.blocking
+        ]
+        clarifying_findings = [f for f in all_related_findings if f not in violating_findings]
+        is_relevant = self._is_requirement_relevant_to_context(req, context)
+
+        # 1. Unresolved violating issues (blocking or label=issue)
+        if violating_findings:
+            status = RequirementStatus.NOT_SATISFIED
+            finding_ids = ", ".join(f.id for f in violating_findings)
+            explanation = (
+                f"Requirement not satisfied: unresolved issue(s) identified ({finding_ids})."
+            )
+        # 2. Positive evidence via verified compensating controls
         elif any(req.id in note for note in dismissal_notes):
             status = RequirementStatus.APPEARS_SATISFIED
-            explanation = "Requirement satisfied via compensating controls in context."
-        elif any(req.id in f.requirement_ids for f in deduped_findings):
-            status = RequirementStatus.NOT_SATISFIED
-            explanation = "Defect or omission in changed code violates this requirement."
+            explanation = "Requirement verified satisfied via compensating controls in context."
+        # 3. Provider-supplied assessment validated against context
+        elif req_id_clean in model_assessments_map:
+            status, explanation = self._assess_from_provider(
+                model_assessments_map[req_id_clean], req.id, is_relevant
+            )
+        # 4. Clarification questions or suggestions without explicit provider assessment
+        elif clarifying_findings:
+            status = RequirementStatus.UNCLEAR
+            q_ids = ", ".join(f.id for f in clarifying_findings)
+            explanation = (
+                f"Requirement '{req.id}' has unresolved questions or suggestions ({q_ids})."
+            )
+        # 5. Fallback: never silently consider unexamined requirement satisfied
         else:
-            status = RequirementStatus.APPEARS_SATISFIED
-            explanation = "No requirement violations identified in changed implementation."
+            status, explanation = self._assess_unexamined_fallback(req.id, is_relevant)
 
         return RequirementAssessment(
             requirement_id=req.id,
@@ -278,7 +517,7 @@ class ReviewEngine:
             text=req.text,
             status=status,
             explanation=explanation,
-            related_finding_ids=[f.id for f in deduped_findings if req.id in f.requirement_ids],
+            related_finding_ids=[f.id for f in all_related_findings],
         )
 
     def _build_requirement_assessments(
@@ -287,6 +526,7 @@ class ReviewEngine:
         provider_resp: ProviderResponse,
         deduped_findings: list[ReviewFinding],
         dismissal_notes: list[str],
+        context: GitReviewContext,
     ) -> list[RequirementAssessment]:
         if not parsed_reqs:
             return [
@@ -312,6 +552,7 @@ class ReviewEngine:
                 model_assessments_map=model_assessments_map,
                 deduped_findings=deduped_findings,
                 dismissal_notes=dismissal_notes,
+                context=context,
             )
             for req in parsed_reqs
         ]

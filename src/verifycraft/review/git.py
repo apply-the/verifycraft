@@ -52,6 +52,7 @@ class GitReviewContext:
     omitted_scope: list[str] = field(default_factory=list)
     diff_lines_count: int = 0
     total_context_bytes: int = 0
+    is_working_tree: bool = False
 
 
 class GitContextCollector:
@@ -97,6 +98,8 @@ class GitContextCollector:
 
     def resolve_commit(self, ref: str) -> str:
         """Resolve a git reference or branch name to its full commit SHA."""
+        if ref.upper() in ("WORKTREE", "WORKING_TREE"):
+            return "WORKTREE (uncommitted)"
         try:
             return self._run_git(["rev-parse", ref]).strip()
         except GitError as e:
@@ -104,11 +107,12 @@ class GitContextCollector:
 
     def get_diff(self, base_ref: str, head_ref: str) -> str:
         """Fetch unified diff between base and head references."""
+        if head_ref.upper() in ("WORKTREE", "WORKING_TREE"):
+            return self._run_git(["diff", "-U3", "-M", base_ref])
+
         # Try three-dot diff first (merge-base), fallback to two-dot
         try:
-            diff = self._run_git(["diff", "-U3", "-M", f"{base_ref}...{head_ref}"])
-            if diff:
-                return diff
+            return self._run_git(["diff", "-U3", "-M", f"{base_ref}...{head_ref}"])
         except GitError:
             pass
 
@@ -228,10 +232,7 @@ class GitContextCollector:
 
     def read_file_at_ref(self, path: str, ref: str) -> str | None:
         """Safely read file content at a given ref using git show."""
-        try:
-            return self._run_git(["show", f"{ref}:{path}"])
-        except GitError:
-            # Fallback to local filesystem if file exists on disk
+        if ref.upper() in ("WORKTREE", "WORKING_TREE"):
             local_path = os.path.join(self.repo_path, path)
             if os.path.isfile(local_path):
                 try:
@@ -239,6 +240,11 @@ class GitContextCollector:
                         return f.read()
                 except OSError:
                     return None
+            return None
+
+        try:
+            return self._run_git(["show", f"{ref}:{path}"])
+        except GitError:
             return None
 
     def _extract_imported_modules(self, changed_files: dict[str, ChangedFile]) -> set[str]:
@@ -375,6 +381,7 @@ class GitContextCollector:
         for r_content in related.values():
             total_bytes += len(r_content.encode("utf-8"))
 
+        is_working_tree = head_revision.upper() in ("WORKTREE", "WORKING_TREE")
         return GitReviewContext(
             repo_path=self.repo_path,
             base_revision=base_revision,
@@ -387,6 +394,7 @@ class GitContextCollector:
             omitted_scope=omitted_scope,
             diff_lines_count=diff_lines_count,
             total_context_bytes=total_bytes,
+            is_working_tree=is_working_tree,
         )
 
     def validate_line_anchor(

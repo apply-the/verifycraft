@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 
 from verifycraft.review.providers.base import (
@@ -85,6 +86,10 @@ class DeterministicReviewerAdapter(ReviewerModelAdapter):
         """Scenario E: Ambiguous requirement check."""
         if "reasonably fast" not in prompt.lower() and "ambiguous" not in prompt.lower():
             return None
+
+        req_id_match = re.search(r"\[(REQ-[A-Z0-9_\-]+)\]", prompt, re.IGNORECASE)
+        req_id = req_id_match.group(1).upper() if req_id_match else "REQ-01"
+
         return ProviderResponse(
             summary=(
                 "Review completed with clarification questions regarding "
@@ -103,13 +108,13 @@ class DeterministicReviewerAdapter(ReviewerModelAdapter):
                     ),
                     severity="info",
                     blocking=False,
-                    requirement_ids=["REQ-01"] if "REQ-01" in prompt else [],
+                    requirement_ids=[req_id],
                     suggested_action="Define explicit numeric TTL in specification.",
                 )
             ],
             requirement_assessments=[
                 RawRequirementAssessment(
-                    requirement_id="REQ-01" if "REQ-01" in prompt else "REQ-AUTH-01",
+                    requirement_id=req_id,
                     status="unclear",
                     explanation=(
                         "Requirement statement is vague ('reasonably fast') and cannot "
@@ -163,12 +168,18 @@ class DeterministicReviewerAdapter(ReviewerModelAdapter):
         if not has_expiration_req:
             return None
 
+        diff_part = prompt
+        if "## Unified Diff" in prompt:
+            diff_part = prompt.split("## Unified Diff")[1]
+            if "## Relevant Surrounding Code" in diff_part:
+                diff_part = diff_part.split("## Relevant Surrounding Code")[0]
+
         has_compensating_control = (
-            "check_token_expiration" in prompt
-            or "token.is_expired()" in prompt
-            or "validate_expiration" in prompt
-            or "expires_at < current_time" in prompt
-            or "is_expired" in prompt
+            "check_token_expiration" in diff_part
+            or "token.is_expired()" in diff_part
+            or "validate_expiration" in diff_part
+            or "expires_at < current_time" in diff_part
+            or "is_expired" in diff_part
         )
 
         if has_compensating_control:
