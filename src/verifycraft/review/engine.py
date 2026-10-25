@@ -20,7 +20,7 @@ from verifycraft.contracts.review import (
     ReviewStatus,
 )
 from verifycraft.review.counterexamples import CounterexampleChecker
-from verifycraft.review.git import GitContextCollector, GitReviewContext
+from verifycraft.review.git import ChangedFile, GitContextCollector, GitReviewContext
 from verifycraft.review.providers.base import (
     ProviderConfigurationError,
     ProviderResponse,
@@ -62,7 +62,11 @@ class ReviewEngine:
                 "Supported: 'gemini', 'deterministic', 'none'."
             )
 
-    def review(self, request: ReviewRequest) -> ReviewReport:
+    def review(
+        self,
+        request: ReviewRequest,
+        context_override: GitReviewContext | None = None,
+    ) -> ReviewReport:
         """Execute a requirements-aware semantic code review against a Git revision pair."""
         start_time = time.monotonic()
 
@@ -71,14 +75,17 @@ class ReviewEngine:
 
         # 2. Collect Git context
         collector = GitContextCollector(request.repo_path)
-        context = collector.collect(
-            base_revision=request.base_revision,
-            head_revision=request.head_revision,
-            explicit_diff=request.diff,
-            max_files=request.policy.max_files,
-            max_diff_lines=request.policy.max_diff_lines,
-            max_context_bytes=request.policy.max_context_bytes,
-        )
+        if context_override is not None:
+            context = context_override
+        else:
+            context = collector.collect(
+                base_revision=request.base_revision,
+                head_revision=request.head_revision,
+                explicit_diff=request.diff,
+                max_files=request.policy.max_files,
+                max_diff_lines=request.policy.max_diff_lines,
+                max_context_bytes=request.policy.max_context_bytes,
+            )
 
         # 3. Parse requirements
         parsed_reqs: list[ParsedRequirement] = []
@@ -434,20 +441,52 @@ class ReviewEngine:
 
         return any(tok in diff_lower or tok in changed_files_str for tok in meaningful_tokens)
 
+    def _is_valid_file_and_line(
+        self, file_path: str, line_no: int | None, context: GitReviewContext
+    ) -> bool:
+        """Validate that file_path exists in context and line_no is within file bounds."""
+        cfile = context.changed_files.get(file_path)
+        if cfile is not None:
+            if line_no is None:
+                return True
+            if cfile.content:
+                total_lines = len(cfile.content.splitlines())
+                return 1 <= line_no <= total_lines
+            return True
+
+        if file_path in context.related_files:
+            if line_no is None:
+                return True
+            content = context.related_files[file_path]
+            total_lines = len(content.splitlines())
+            return 1 <= line_no <= total_lines
+
+        # Suffix matching for paths
+        for k, cfile in context.changed_files.items():
+            if k.endswith(f"/{file_path}") or file_path.endswith(f"/{k}"):
+                if line_no is None:
+                    return True
+                if cfile.content:
+                    total_lines = len(cfile.content.splitlines())
+                    return 1 <= line_no <= total_lines
+                return True
+
+        return False
+
     def _has_valid_source_location(self, locations: list[str], context: GitReviewContext) -> bool:
-        """Check if at least one location cites a valid file in the review context."""
+        """Check if at least one location cites a valid file and line in the review context."""
         if not locations:
             return False
         for loc in locations:
-            file_part = loc.split(":")[0].strip()
-            if (
-                file_part in context.changed_files
-                or file_part in context.related_files
-                or any(
-                    k.endswith(f"/{file_part}") or file_part.endswith(f"/{k}")
-                    for k in context.changed_files
-                )
-            ):
+            parts = loc.split(":")
+            file_part = parts[0].strip()
+            line_no = None
+            if len(parts) > 1:
+                try:
+                    line_no = int(parts[1].strip())
+                except ValueError:
+                    line_no = None
+            if self._is_valid_file_and_line(file_part, line_no, context):
                 return True
         return False
 
@@ -496,7 +535,15 @@ class ReviewEngine:
                 f"for '{req_id}'; marked unclear for clarification.",
             )
 
-        return raw_status, raw_a.explanation
+        explanation = raw_a.explanation
+        if not explanation.startswith("[Grounding:"):
+            cited_str = (
+                ", ".join(raw_a.related_locations) if raw_a.related_locations else "diff context"
+            )
+            grounding_prefix = f"[Grounding: Model semantic inference | Citations: {cited_str}]"
+            explanation = f"{grounding_prefix} {raw_a.explanation}"
+
+        return raw_status, explanation
 
     def _assess_unexamined_fallback(
         self,
@@ -541,7 +588,10 @@ class ReviewEngine:
         # 2. Positive evidence via verified compensating controls
         elif any(req.id in note for note in dismissal_notes):
             status = RequirementStatus.APPEARS_SATISFIED
-            explanation = "Requirement verified satisfied via compensating controls in context."
+            explanation = (
+                "[Grounding: Statically detected compensating control in context] "
+                "Requirement verified satisfied via compensating controls in context."
+            )
         # 3. Provider-supplied assessment validated against context
         elif req_id_clean in model_assessments_map:
             status, explanation = self._assess_from_provider(
@@ -608,26 +658,147 @@ class ReviewEngine:
             for req in parsed_reqs
         ]
 
+    def _format_changed_file_context(
+        self,
+        cfile: ChangedFile,
+        max_lines_per_file: int = 250,
+        context_window: int = 25,
+    ) -> str:
+        """Format a changed file with 1-indexed line numbers and bounded surrounding context."""
+        if not cfile.content:
+            return "(Empty file)"
+
+        lines = cfile.content.splitlines()
+        total_lines = len(lines)
+
+        # Small enough file: include full source with line numbers
+        if total_lines <= max_lines_per_file:
+            return "\n".join(f"{i}: {line}" for i, line in enumerate(lines, start=1))
+
+        # Larger file: select preamble (imports/headers) + windows around hunks
+        intervals: list[tuple[int, int]] = []
+        # Preamble: lines 1 to min(30, total_lines)
+        intervals.append((1, min(30, total_lines)))
+
+        # Surrounding windows around hunks
+        for hunk in cfile.hunks:
+            h_start = max(1, hunk.new_start - context_window)
+            h_end = min(total_lines, hunk.new_start + max(hunk.new_lines, 1) + context_window)
+            intervals.append((h_start, h_end))
+
+        # Sort and merge intervals
+        intervals.sort(key=lambda x: x[0])
+        merged: list[tuple[int, int]] = []
+        for start, end in intervals:
+            if not merged:
+                merged.append((start, end))
+            else:
+                prev_start, prev_end = merged[-1]
+                if start <= prev_end + 1:
+                    merged[-1] = (prev_start, max(prev_end, end))
+                else:
+                    merged.append((start, end))
+
+        formatted_chunks: list[str] = []
+        prev_end = 0
+        for start, end in merged:
+            if prev_end > 0 and start > prev_end + 1:
+                omitted_count = start - prev_end - 1
+                formatted_chunks.append(
+                    f"... [{omitted_count} surrounding lines omitted for brevity "
+                    f"(lines {prev_end + 1}-{start - 1}); see diff] ..."
+                )
+            for i in range(start, end + 1):
+                formatted_chunks.append(f"{i}: {lines[i - 1]}")
+            prev_end = end
+
+        if prev_end < total_lines:
+            omitted_count = total_lines - prev_end
+            formatted_chunks.append(
+                f"... [{omitted_count} trailing lines omitted for brevity "
+                f"(lines {prev_end + 1}-{total_lines}); see diff] ..."
+            )
+
+        return "\n".join(formatted_chunks)
+
     def _build_prompt(
         self,
         context: Any,
         requirements: list[ParsedRequirement],
     ) -> str:
         """Construct the prompt sent to the reviewer model adapter."""
+        if getattr(context, "is_working_tree", False) or getattr(
+            context, "head_revision", ""
+        ).upper() in (
+            "WORKTREE",
+            "WORKING_TREE",
+        ):
+            head_str = (
+                f"WORKTREE (Uncommitted working-tree modifications relative to base "
+                f"{context.base_revision} [{context.base_commit[:8]}])"
+            )
+        else:
+            head_str = f"{context.head_revision} ({context.head_commit[:8]})"
+
         parts = [
             "# Code Review Request",
             "",
             f"Repository Base: {context.base_revision} ({context.base_commit[:8]})",
-            f"Repository Head: {context.head_revision} ({context.head_commit[:8]})",
-            "",
-            "## Unified Diff",
-            "```diff",
-            context.raw_diff or "(No changes in diff)",
-            "```",
+            f"Repository Head: {head_str}",
             "",
         ]
 
-        if context.related_files:
+        if getattr(context, "omitted_scope", None):
+            parts.extend(
+                [
+                    "## Context Scope and Omissions Notice",
+                    "*(The following limitations or omissions apply to this review context)*",
+                    "",
+                ]
+            )
+            for omission in context.omitted_scope:
+                parts.append(f"- {omission}")
+            parts.append("")
+
+        parts.extend(
+            [
+                "## Unified Diff",
+                "```diff",
+                context.raw_diff or "(No changes in diff)",
+                "```",
+                "",
+            ]
+        )
+
+        if getattr(context, "changed_files", None):
+            parts.extend(
+                [
+                    "## Changed Files (Surrounding Implementation Context)",
+                    "*(Numbered lines showing surrounding functions, classes, and imports)*",
+                    "",
+                ]
+            )
+            for path, cfile in context.changed_files.items():
+                if cfile.status == "deleted":
+                    parts.extend([f"### Changed File: `{path}` *(deleted)*", ""])
+                    continue
+                file_repr = self._format_changed_file_context(cfile)
+                parts.extend(
+                    [
+                        f"### Changed File: `{path}`",
+                        "```python",
+                        file_repr,
+                        "```",
+                        "",
+                    ]
+                )
+
+        unique_related = {
+            path: content
+            for path, content in getattr(context, "related_files", {}).items()
+            if path not in getattr(context, "changed_files", {})
+        }
+        if unique_related:
             parts.extend(
                 [
                     "## Relevant Surrounding Code & Related Helpers",
@@ -635,7 +806,7 @@ class ReviewEngine:
                     "",
                 ]
             )
-            for path, content in context.related_files.items():
+            for path, content in unique_related.items():
                 parts.extend(
                     [
                         f"### Context File: `{path}`",

@@ -1,10 +1,14 @@
-# VerifyCraft Benchmarks (Stage 0 / Stage 1)
+# VerifyCraft Benchmarks & Quality Evaluation
 
-This directory contains the reproducible benchmark suite evaluating VerifyCraft's verification capability against a prompt-based LLM reviewer baseline across canonical Python/pytest scenarios.
+This directory contains two evaluation suites:
+1. **Verification Contract Invariants Suite** (`benchmarks.evaluate`): Tests VerifyCraft's core test execution engine contracts against a deterministic keyword heuristic across 5 controlled Python/pytest scenarios.
+2. **Review Quality Evaluation Suite** (`benchmarks.evaluate_review`): Evaluates semantic code review performance (Direct Gemini vs VerifyCraft) across a 16-case versioned evaluation dataset.
 
-## Benchmark Fixtures & Scenarios
+---
 
-The benchmark consists of 5 controlled fixtures with explicit ground-truth verdicts:
+## 1. Verification Contract Invariants Suite
+
+Evaluates engine contracts and safety boundaries across 5 controlled fixtures:
 
 | Case ID | Scenario | Expected Behavior | Ground Truth Verdict |
 | :--- | :--- | :--- | :--- |
@@ -14,45 +18,52 @@ The benchmark consists of 5 controlled fixtures with explicit ground-truth verdi
 | `case_04_blocked_untrusted_code` | Analysis requested on an untrusted public PR without container isolation. | Execution safety policy blocks execution to prevent uncontained code execution. | **`blocked`** |
 | `case_05_stale_evidence` | Cached evidence from an older revision/diff is presented for a new revision. | SHA-256 change fingerprint mismatch is detected; stale evidence is rejected. | **`blocked`** |
 
-## Baseline Comparison: Prompt-Only LLM Reviewer
+### Baseline Comparison: Keyword-Heuristic Baseline (Not a Real LLM)
 
-The `BaselineReviewer` models the behavior of an ungrounded LLM reviewing code changes without an execution engine:
-- It relies purely on text heuristics and claim phrasing.
-- Because it cannot execute pytest, it suffers from confirmation bias (assuming plausible-sounding claims are true), producing false positives.
-- It cannot detect when tests actually pass and refute a claim.
-- It cannot enforce execution sandboxing policies or container requirements.
-- It cannot detect stale evidence fingerprints.
+> [!IMPORTANT]
+> The `BaselineReviewer` in `benchmarks/baseline.py` is a **deterministic keyword-heuristic baseline**, NOT a real LLM reviewer.
+> It simulates the vulnerability of prompt-only/heuristic systems that lack an execution engine:
+> - It relies purely on text matching (e.g. checking if "error" or "fails" appears in the claim text).
+> - It cannot execute tests, so it cannot distinguish actual regressions from refuted claims.
+> - It cannot enforce sandboxing or detect stale change fingerprints.
+> - It serves to test that VerifyCraft's verification engine enforces safety and execution contracts where keyword heuristics fail.
 
-## Running the Benchmark
-
-Run the benchmark evaluation runner with human-readable summary output:
-
-```bash
-python -m benchmarks.evaluate
-```
-
-Or with `uv`:
+Run the verification contract benchmark:
 
 ```bash
 uv run python -m benchmarks.evaluate
 ```
 
-To emit machine-readable JSON results:
+---
+
+## 2. Review Quality Evaluation Suite (v0.2.0)
+
+Evaluates requirements-aware code review capability across 16 realistic, human-curated Python code changes (10 development cases, 6 independent held-out cases).
+
+### Evaluated Dimensions:
+- **Direct Gemini Review**: Raw model review without VerifyCraft's grounding and validation pipeline.
+- **VerifyCraft Review**: Full VerifyCraft review with surrounding context enrichment, line anchor validation, AST compensating control checks, grounding tags, and safe requirement assessment fallbacks.
+
+### Tracked Metrics:
+- **Precision**: Actionable findings matching verified defects / Total issues reported.
+- **Recall (Known-Defect Yield)**: Verified defects discovered / Total ground-truth defects.
+- **False Positives**: Incorrect defect assertions prevented by AST compensating controls.
+- **Invalid Locations**: Fabricated line coordinates or untouched file citations eliminated.
+- **Requirements Accuracy**: Exact requirement status match against specification.
+- **Token Usage & API Cost**: Operational cost per review.
+
+Run the review quality evaluation:
 
 ```bash
-python -m benchmarks.evaluate --json
+# Offline evaluation (hermetic, reproducible simulated reviewer):
+uv run python -m benchmarks.evaluate_review
+
+# Live Gemini review evaluation (requires GEMINI_API_KEY or GOOGLE_API_KEY):
+uv run python -m benchmarks.evaluate_review --live
+
+# Independent held-out split evaluation:
+uv run python -m benchmarks.evaluate_review --split held_out
+
+# Output JSON report:
+uv run python -m benchmarks.evaluate_review --json
 ```
-
-## Metrics and Scope
-
-1. **Contract Invariant Adherence**: Verifies that the engine deterministically satisfies each invariant:
-   - Defect confirmation requires an observable diagnostic signature (not just an exit code 1).
-   - Passing tests refute claimed regression failures.
-   - Unmatched diagnostic signatures yield inconclusive findings.
-   - Untrusted code is intercepted and blocked without container isolation.
-   - Outdated/mismatched evidence is rejected as stale.
-2. **False Positive Prevention**: Demonstrates that without test execution and diagnostic matching, prompt-only reviewers hallucinate regressions on plausible claims.
-3. **Execution Latency**: Wall-clock time required to enforce policies, execute checks, and evaluate evidence.
-
-> [!NOTE]
-> These 5 canonical fixtures test deterministic engine contracts and safety invariants. They are not an empirical benchmark of LLM hypothesis generation across arbitrary open-source repositories (which is planned for later roadmap stages).
