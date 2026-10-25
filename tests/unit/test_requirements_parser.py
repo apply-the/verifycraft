@@ -73,3 +73,31 @@ def test_requirements_parser_parse_all_inline_prefixes() -> None:
     assert reqs[0].source_file == "inline"
     assert reqs[1].id == "REQ-AUTH-02"
     assert reqs[1].source_file == "inline"
+
+
+def test_requirements_parser_parse_all_multiline_and_empty() -> None:
+    parser = RequirementsParser()
+    reqs = parser.parse_all(
+        [
+            "   ",
+            "Requirement REQ-01: Must be fast\nRequirement REQ-02: Must be secure",
+        ]
+    )
+    assert len(reqs) == 2
+    assert reqs[0].id == "REQ-01"
+    assert reqs[1].id == "REQ-02"
+
+
+def test_requirements_parser_file_outside_repo_root(tmp_path: Path) -> None:
+    doc = tmp_path / "other" / "spec.md"
+    doc.parent.mkdir()
+    doc.write_text("- **[REQ-OUT-01]**: Out of repo root.", encoding="utf-8")
+
+    parser = RequirementsParser()
+    # repo_root is a completely different directory that cannot be parent of doc
+    different_root = tmp_path / "some_other_repo"
+    different_root.mkdir()
+    reqs = parser.parse_file(str(doc), repo_root=str(different_root))
+    assert len(reqs) == 1
+    assert reqs[0].id == "REQ-OUT-01"
+    assert reqs[0].source_file == str(doc)

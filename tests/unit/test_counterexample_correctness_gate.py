@@ -255,3 +255,91 @@ def test_case_e_valid_protection() -> None:
     assert len(val_div) == 0
     assert len(notes_div) == 1
     assert "f-div-05" in notes_div[0]
+
+
+def test_zero_division_assert_and_try_guards() -> None:
+    checker = CounterexampleChecker()
+
+    # Assert guard: assert b != 0
+    finding_assert = ReviewFinding(
+        id="f-assert-01",
+        file_path="src/calc.py",
+        line=3,
+        label=ConventionalLabel.ISSUE,
+        subject="Zero division",
+        description="Division by b without guard",
+        severity=FindingSeverity.HIGH,
+        blocking=True,
+    )
+    ctx_assert = _make_context(
+        target_content="def divide(a, b):\n    assert b != 0\n    return a / b\n",
+        target_path="src/calc.py",
+    )
+    val, notes = checker.check_compensating_controls([finding_assert], ctx_assert)
+    assert len(val) == 0
+    assert len(notes) == 1
+
+    # Try guard: try / except ZeroDivisionError
+    finding_try = ReviewFinding(
+        id="f-try-01",
+        file_path="src/calc.py",
+        line=3,
+        label=ConventionalLabel.ISSUE,
+        subject="Zero division",
+        description="Division by b without guard",
+        severity=FindingSeverity.HIGH,
+        blocking=True,
+    )
+    ctx_try = _make_context(
+        target_content=(
+            "def divide(a, b):\n"
+            "    try:\n"
+            "        return a / b\n"
+            "    except ZeroDivisionError:\n"
+            "        return 0\n"
+        ),
+        target_path="src/calc.py",
+    )
+    val2, notes2 = checker.check_compensating_controls([finding_try], ctx_try)
+    assert len(val2) == 0
+    assert len(notes2) == 1
+
+
+def test_counterexample_corner_cases() -> None:
+    checker = CounterexampleChecker()
+
+    # Division by literal constant (no denominator variable)
+    finding_const = ReviewFinding(
+        id="f-const-01",
+        file_path="src/calc.py",
+        line=2,
+        label=ConventionalLabel.ISSUE,
+        subject="Zero division",
+        description="Division by constant",
+        severity=FindingSeverity.HIGH,
+        blocking=True,
+    )
+    ctx_const = _make_context(
+        target_content="def divide(a):\n    return a / 2\n",
+        target_path="src/calc.py",
+    )
+    val_c, _ = checker.check_compensating_controls([finding_const], ctx_const)
+    assert len(val_c) == 1  # Finding remains (no variable denominator to guard)
+
+    # Lambda call / unextractable function name in scope
+    finding_lambda = ReviewFinding(
+        id="f-lambda-01",
+        file_path="src/auth.py",
+        line=3,
+        label=ConventionalLabel.ISSUE,
+        subject="Missing token expiration check",
+        description="No expiration check",
+        severity=FindingSeverity.HIGH,
+        blocking=True,
+    )
+    ctx_lambda = _make_context(
+        target_content="def auth(token):\n    (lambda x: x)(token)\n    return token.is_valid\n",
+        target_path="src/auth.py",
+    )
+    val_l, _ = checker.check_compensating_controls([finding_lambda], ctx_lambda)
+    assert len(val_l) == 1  # Finding remains

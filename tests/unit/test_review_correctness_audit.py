@@ -15,6 +15,8 @@ import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock
 
+import pytest
+
 from verifycraft.contracts.review import (
     ConventionalLabel,
     EvidenceStatus,
@@ -256,3 +258,80 @@ def test_incomplete_review_notice_in_markdown_report() -> None:
     md = report.to_markdown()
     assert "Omitted Scope" in md
     assert "not exhaustive" in md
+
+
+def test_requirement_assessment_empty_explanation_downgraded() -> None:
+    """Provider claim with empty explanation must be downgraded to UNCLEAR."""
+    engine = ReviewEngine()
+    context = GitReviewContext(
+        repo_path=".",
+        base_revision="main",
+        head_revision="HEAD",
+        base_commit="a" * 40,
+        head_commit="b" * 40,
+        raw_diff="diff --git a/src/auth.py b/src/auth.py\n+def login(): pass",
+        changed_files={"src/auth.py": ChangedFile(path="src/auth.py", status="modified")},
+        related_files={},
+    )
+    raw_a = RawRequirementAssessment(
+        requirement_id="REQ-AUTH-01",
+        status="appears_satisfied",
+        explanation="   ",  # Empty explanation!
+        related_locations=["src/auth.py:1"],
+    )
+    status, expl = engine._assess_from_provider(
+        raw_a, "REQ-AUTH-01", is_relevant=True, context=context
+    )
+    assert status == RequirementStatus.UNCLEAR
+    assert "no concrete explanation" in expl
+
+
+def test_requirement_diff_stopwords_only() -> None:
+    """Requirement composed solely of stopwords returns False for diff relevance."""
+    from verifycraft.review.requirements import ParsedRequirement
+
+    engine = ReviewEngine()
+    context = GitReviewContext(
+        repo_path=".",
+        base_revision="main",
+        head_revision="HEAD",
+        base_commit="a" * 40,
+        head_commit="b" * 40,
+        raw_diff="diff --git a/src/auth.py b/src/auth.py\n+def login(): pass",
+        changed_files={"src/auth.py": ChangedFile(path="src/auth.py", status="modified")},
+        related_files={},
+    )
+    req = ParsedRequirement(
+        id="REQ-01",
+        text="the and or but",
+        source_file="spec.md",
+    )
+    assert engine._is_requirement_relevant_to_context(req, context) is False
+
+
+def test_worktree_untracked_files_git_error_handled(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """GitError during untracked files inspection in WORKTREE mode is safely handled."""
+    from verifycraft.review.git import GitError
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+
+    tracked = repo / "tracked.py"
+    tracked.write_text("# initial\n", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-m", "init"], cwd=repo, check=True, capture_output=True)
+
+    collector = GitContextCollector(str(repo))
+    orig_run_git = collector._run_git
+
+    def mock_run_git_error(args: list[str]) -> str:
+        if "ls-files" in args:
+            raise GitError("git ls-files failed")
+        return orig_run_git(args)
+
+    monkeypatch.setattr(collector, "_run_git", mock_run_git_error)
+    context = collector.collect(base_revision="HEAD", head_revision="WORKTREE")
+    assert context.is_working_tree is True
