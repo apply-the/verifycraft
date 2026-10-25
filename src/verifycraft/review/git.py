@@ -382,6 +382,27 @@ class GitContextCollector:
             total_bytes += len(r_content.encode("utf-8"))
 
         is_working_tree = head_revision.upper() in ("WORKTREE", "WORKING_TREE")
+        if is_working_tree:
+            omitted_scope.append(
+                "WORKTREE mode active: review inspects working tree state relative to base "
+                "revision; unstaged and staged modifications are included, but untracked files "
+                "require explicit tracking."
+            )
+            try:
+                untracked_out = self._run_git(["ls-files", "--others", "--exclude-standard"])
+                untracked_files = [f.strip() for f in untracked_out.splitlines() if f.strip()]
+                if untracked_files:
+                    untracked_summary = ", ".join(untracked_files[:5])
+                    more = (
+                        f" and {len(untracked_files) - 5} more" if len(untracked_files) > 5 else ""
+                    )
+                    omitted_scope.append(
+                        f"WORKTREE mode limitation: {len(untracked_files)} untracked file(s) "
+                        f"omitted from review ({untracked_summary}{more}). "
+                        "Track with 'git add' to include."
+                    )
+            except GitError:
+                pass
         return GitReviewContext(
             repo_path=self.repo_path,
             base_revision=base_revision,

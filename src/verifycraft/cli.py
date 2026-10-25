@@ -370,6 +370,9 @@ def _execute_review(args: argparse.Namespace) -> None:
     engine = ReviewEngine()
     try:
         report = engine.review(request)
+    except FileNotFoundError as e:
+        print(f"VerifyCraft Requirements Error: {e}", file=sys.stderr)
+        sys.exit(1)
     except GitError as e:
         print(f"VerifyCraft Git Error: {e}", file=sys.stderr)
         sys.exit(1)

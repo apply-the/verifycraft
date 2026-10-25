@@ -117,7 +117,25 @@ class RequirementsParser:
         all_reqs: list[ParsedRequirement] = []
         for src in sources:
             src_clean = src.strip()
-            # Check if src is an existing file
+            if not src_clean:
+                continue
+
+            # Explicit inline interfaces
+            if src_clean.lower().startswith("inline:"):
+                inline_content = src_clean[len("inline:") :].strip()
+                all_reqs.extend(self.parse_text(inline_content, source_file="inline"))
+                continue
+            if src_clean.lower().startswith("text:"):
+                text_content = src_clean[len("text:") :].strip()
+                all_reqs.extend(self.parse_text(text_content, source_file="inline"))
+                continue
+
+            # Multiline string is unambiguous inline text
+            if "\n" in src_clean:
+                all_reqs.extend(self.parse_text(src_clean, source_file="inline"))
+                continue
+
+            # Resolve local file target
             target = src_clean
             if repo_root and not os.path.isabs(src_clean):
                 target = os.path.join(repo_root, src_clean)
@@ -125,8 +143,15 @@ class RequirementsParser:
             if os.path.isfile(target):
                 all_reqs.extend(self.parse_file(src_clean, repo_root=repo_root))
             else:
-                # Treat as raw requirement text
-                all_reqs.extend(self.parse_text(src_clean, source_file="inline"))
+                # If path has file extension, directory slashes, or is a single token,
+                # an explicit requirements file path that does not exist must produce an error.
+                has_file_ext = bool(re.search(r"\.[a-zA-Z0-9_-]+$", src_clean))
+                has_slashes = "/" in src_clean or "\\" in src_clean
+                is_single_token = " " not in src_clean and "[" not in src_clean
+                if has_file_ext or has_slashes or is_single_token:
+                    raise FileNotFoundError(f"Requirements file not found: {src_clean}")
+                else:
+                    all_reqs.extend(self.parse_text(src_clean, source_file="inline"))
 
         # Deduplicate by ID
         seen: set[str] = set()
