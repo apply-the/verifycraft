@@ -128,6 +128,22 @@ class CounterexampleChecker:
             or "has_expired" in lowered
         )
 
+    def _is_matching_expiry_compare(
+        self,
+        node: ast.AST,
+        subject_token: str | None,
+        max_line: int | None,
+    ) -> bool:
+        if not isinstance(node, ast.Compare):
+            return False
+        lineno = getattr(node, "lineno", 0)
+        if max_line is not None and lineno > max_line:
+            return False
+        txt = ast.unparse(node)
+        if "expires_at" not in txt and "expired" not in txt:
+            return False
+        return not subject_token or subject_token in txt
+
     def _has_expires_at_check(
         self,
         scope: ast.AST,
@@ -135,17 +151,10 @@ class CounterexampleChecker:
         max_line: int | None = None,
     ) -> bool:
         """Check if AST scope directly compares expires_at on token before max_line."""
-        for node in ast.walk(scope):
-            if isinstance(node, ast.Compare):
-                lineno = getattr(node, "lineno", 0)
-                if max_line is not None and lineno > max_line:
-                    continue
-                txt = ast.unparse(node)
-                if "expires_at" in txt or "expired" in txt:
-                    if subject_token and subject_token not in txt:
-                        continue
-                    return True
-        return False
+        return any(
+            self._is_matching_expiry_compare(node, subject_token, max_line)
+            for node in ast.walk(scope)
+        )
 
     def _find_denominator_variable(self, scope: ast.AST, target_line: int | None) -> str | None:
         """Find the denominator identifier in a division expression at target_line."""
