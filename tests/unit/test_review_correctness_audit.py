@@ -302,8 +302,8 @@ def test_requirement_diff_stopwords_only() -> None:
         related_files={},
     )
     req = ParsedRequirement(
-        id="REQ-01",
-        text="the and or but",
+        id="1",
+        text="the and or",
         source_file="spec.md",
     )
     assert engine._is_requirement_relevant_to_context(req, context) is False
@@ -335,3 +335,23 @@ def test_worktree_untracked_files_git_error_handled(
     monkeypatch.setattr(collector, "_run_git", mock_run_git_error)
     context = collector.collect(base_revision="HEAD", head_revision="WORKTREE")
     assert context.is_working_tree is True
+
+
+def test_populate_file_contents_deleted_and_missing(tmp_path: Path) -> None:
+    """Deleted files and files with missing content are skipped in content population."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+
+    collector = GitContextCollector(str(repo))
+    changed_files = {
+        "deleted.py": ChangedFile(path="deleted.py", status="deleted"),
+        "nonexistent.py": ChangedFile(path="nonexistent.py", status="modified"),
+    }
+    omitted: list[str] = []
+    total_bytes = collector._populate_file_contents(
+        changed_files, "HEAD", max_context_bytes=1000, omitted_scope=omitted
+    )
+    assert total_bytes == 0
+    assert changed_files["deleted.py"].content is None
+    assert changed_files["nonexistent.py"].content is None

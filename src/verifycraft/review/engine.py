@@ -269,9 +269,7 @@ class ReviewEngine:
                 )
 
             notes.append(f"*(Provenance: candidate ID '{cand.id}')*")
-            desc = cand.description
-            if notes:
-                desc = f"{desc}\n\n" + "\n\n".join(notes)
+            desc = f"{cand.description}\n\n" + "\n\n".join(notes)
 
             v_end_line = cand.end_line if v_line is not None else None
 

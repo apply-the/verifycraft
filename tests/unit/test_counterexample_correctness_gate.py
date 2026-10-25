@@ -10,6 +10,7 @@ E. Valid protection: correctly enforced check before operation.
 
 from __future__ import annotations
 
+import ast
 from pathlib import Path
 
 from verifycraft.contracts.review import (
@@ -304,6 +305,10 @@ def test_zero_division_assert_and_try_guards() -> None:
     assert len(val2) == 0
     assert len(notes2) == 1
 
+    try_node = ast.parse("try:\n    pass\nexcept Exception:\n    pass").body[0]
+    assert isinstance(try_node, ast.Try)
+    assert checker._is_try_guard(try_node, target_line=None) is True
+
 
 def test_counterexample_corner_cases() -> None:
     checker = CounterexampleChecker()
@@ -343,3 +348,127 @@ def test_counterexample_corner_cases() -> None:
     )
     val_l, _ = checker.check_compensating_controls([finding_lambda], ctx_lambda)
     assert len(val_l) == 1  # Finding remains
+
+
+def test_guard_branches_and_corner_cases() -> None:
+    checker = CounterexampleChecker()
+
+    # 1. Missing target file or content is None in _check_expiration_compensation
+    f_missing = ReviewFinding(
+        id="f-miss",
+        file_path="src/missing.py",
+        line=2,
+        label=ConventionalLabel.ISSUE,
+        subject="Missing token expiration check",
+        description="Missing expiration",
+        severity=FindingSeverity.HIGH,
+    )
+    val_m, _ = checker.check_compensating_controls([f_missing], _make_context(target_content=""))
+    assert len(val_m) == 1
+
+    # 2. Compare node with unrelated expression and compare node after max_line
+    ctx_compare = _make_context(
+        target_content=(
+            "def authenticate(token):\n"
+            "    x = 10\n"
+            "    if x > 5:\n"  # unrelated compare
+            "        pass\n"
+            "    return token.is_valid\n"
+            "    if token.expires_at < 100: pass\n"  # after finding line 2
+        )
+    )
+    f_comp = ReviewFinding(
+        id="f-comp",
+        file_path="src/auth.py",
+        line=5,
+        label=ConventionalLabel.ISSUE,
+        subject="Missing token expiration check",
+        description="Missing expiration",
+        severity=FindingSeverity.HIGH,
+    )
+    val_comp, _ = checker.check_compensating_controls([f_comp], ctx_compare)
+    assert len(val_comp) == 1
+
+    # 3. Assert guard: assert after division, assert on unrelated variable
+    ctx_assert_after = _make_context(
+        target_content=(
+            "def divide(a, b):\n"
+            "    res = a / b\n"  # line 2
+            "    assert b != 0\n"  # line 3: too late
+            "    return res\n"
+        ),
+        target_path="src/calc.py",
+    )
+    f_assert_after = ReviewFinding(
+        id="f-aa",
+        file_path="src/calc.py",
+        line=2,
+        label=ConventionalLabel.ISSUE,
+        subject="Zero division",
+        description="Denominator b may be zero",
+        severity=FindingSeverity.HIGH,
+    )
+    val_aa, _ = checker.check_compensating_controls([f_assert_after], ctx_assert_after)
+    assert len(val_aa) == 1
+
+    ctx_assert_unrel = _make_context(
+        target_content=("def divide(a, b):\n    assert debug > 0\n    return a / b\n"),
+        target_path="src/calc.py",
+    )
+    f_assert_unrel = ReviewFinding(
+        id="f-au",
+        file_path="src/calc.py",
+        line=3,
+        label=ConventionalLabel.ISSUE,
+        subject="Zero division",
+        description="Denominator b may be zero",
+        severity=FindingSeverity.HIGH,
+    )
+    val_au, _ = checker.check_compensating_controls([f_assert_unrel], ctx_assert_unrel)
+    assert len(val_au) == 1
+
+    # 4. Try guard: division outside try block, and try block with non-matching exception (KeyError)
+    ctx_try_outside = _make_context(
+        target_content=(
+            "def divide(a, b):\n"
+            "    try:\n"
+            "        x = 1\n"
+            "    except KeyError:\n"
+            "        return 0\n"
+            "    return a / b\n"  # line 6: outside try block
+        ),
+        target_path="src/calc.py",
+    )
+    f_try_outside = ReviewFinding(
+        id="f-to",
+        file_path="src/calc.py",
+        line=6,
+        label=ConventionalLabel.ISSUE,
+        subject="Zero division",
+        description="Denominator b may be zero",
+        severity=FindingSeverity.HIGH,
+    )
+    val_to, _ = checker.check_compensating_controls([f_try_outside], ctx_try_outside)
+    assert len(val_to) == 1
+
+    ctx_try_keyerror = _make_context(
+        target_content=(
+            "def divide(a, b):\n"
+            "    try:\n"
+            "        return a / b\n"
+            "    except KeyError:\n"
+            "        return 0\n"
+        ),
+        target_path="src/calc.py",
+    )
+    f_try_keyerror = ReviewFinding(
+        id="f-tk",
+        file_path="src/calc.py",
+        line=3,
+        label=ConventionalLabel.ISSUE,
+        subject="Zero division",
+        description="Denominator b may be zero",
+        severity=FindingSeverity.HIGH,
+    )
+    val_tk, _ = checker.check_compensating_controls([f_try_keyerror], ctx_try_keyerror)
+    assert len(val_tk) == 1

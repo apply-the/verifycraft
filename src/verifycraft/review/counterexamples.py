@@ -175,10 +175,8 @@ class CounterexampleChecker:
                 return node.right.id
         return None
 
-    def _is_if_guard(self, node: ast.If, target_line: int | None, denom: str | None) -> bool:
+    def _is_if_guard(self, node: ast.If, target_line: int | None, denom: str) -> bool:
         if target_line is not None and getattr(node, "lineno", 0) > target_line:
-            return False
-        if denom is None:
             return False
         names_in_test = {n.id for n in ast.walk(node.test) if isinstance(n, ast.Name)}
         if denom not in names_in_test:
@@ -188,12 +186,8 @@ class CounterexampleChecker:
             p in txt for p in ("== 0", "!= 0", "not ", "<= 0", "is 0", "is None", "> 0", "< 0")
         )
 
-    def _is_assert_guard(
-        self, node: ast.Assert, target_line: int | None, denom: str | None
-    ) -> bool:
+    def _is_assert_guard(self, node: ast.Assert, target_line: int | None, denom: str) -> bool:
         if target_line is not None and getattr(node, "lineno", 0) > target_line:
-            return False
-        if denom is None:
             return False
         names_in_test = {n.id for n in ast.walk(node.test) if isinstance(n, ast.Name)}
         if denom not in names_in_test:
@@ -217,10 +211,11 @@ class CounterexampleChecker:
         """Check if AST scope contains an explicit guard protecting division on target variable."""
         denom = self._find_denominator_variable(scope, target_line)
         for sub in ast.walk(scope):
-            if isinstance(sub, ast.If) and self._is_if_guard(sub, target_line, denom):
-                return True
-            if isinstance(sub, ast.Assert) and self._is_assert_guard(sub, target_line, denom):
-                return True
+            if denom is not None:
+                if isinstance(sub, ast.If) and self._is_if_guard(sub, target_line, denom):
+                    return True
+                if isinstance(sub, ast.Assert) and self._is_assert_guard(sub, target_line, denom):
+                    return True
             if isinstance(sub, ast.Try) and self._is_try_guard(sub, target_line):
                 return True
         return False
