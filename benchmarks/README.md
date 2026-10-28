@@ -83,6 +83,16 @@ The 16 evaluation cases are curated and reconstructed from real-world Python bug
 - **Comment Volume**: Total comments generated across the run.
 - **Token Accounting & Cost**: Operational cost and actual (live) or estimated (simulated) token usage.
 
+### Defensible Release Decision Policy
+
+VerifyCraft enforces a 5-stage decision policy rather than emitting an unconditional `GO`:
+
+1. **Credentials Availability:** Valid `GEMINI_API_KEY` or `GOOGLE_API_KEY` in environment.
+2. **Provider Execution:** Live API calls complete without network, quota, or authentication failures.
+3. **Live Evaluation:** Full evaluation completed in live mode (not simulated).
+4. **Objective Quality Thresholds:** $\ge 85\%$ precision, $\ge 90\%$ recall, 0 invalid locations, no regressions vs direct baseline.
+5. **Maintainer Manual Approval:** Required human sign-off on Conventional Comments and requirements truthfulness. Even if automated thresholds pass, the benchmark emits `PENDING_MAINTAINER_APPROVAL`, never an autonomous `GO`.
+
 ### How to Run
 
 ```bash
