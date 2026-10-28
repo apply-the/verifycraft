@@ -260,3 +260,204 @@ def test_provider_appears_satisfied_grounding_tag() -> None:
     assert explanation.startswith(
         "[Grounding: Model semantic inference | Citations: src/auth.py:2]"
     )
+
+    # When explanation already starts with [Grounding:, prefix is preserved without duplication
+    raw_a_grounded = RawRequirementAssessment(
+        requirement_id="REQ-01",
+        status="appears_satisfied",
+        explanation="[Grounding: Pre-grounded by pipeline] Verified.",
+        related_locations=["src/auth.py:2"],
+    )
+    _, explanation_grounded = engine._assess_from_provider(
+        raw_a=raw_a_grounded,
+        req_id="REQ-01",
+        is_relevant=True,
+        context=context,
+    )
+    assert explanation_grounded == "[Grounding: Pre-grounded by pipeline] Verified."
+
+
+def test_format_changed_file_context_empty_and_large_file_truncation() -> None:
+    """Verifies that empty files and large files with multiple hunks are formatted properly."""
+    engine = ReviewEngine()
+
+    # Empty file
+    empty_cfile = ChangedFile(
+        path="src/empty.py",
+        status="added",
+        content="",
+    )
+    assert engine._format_changed_file_context(empty_cfile) == "(Empty file)"
+
+    # Large file (>250 lines) with hunks and omissions
+    lines = [f"def line_{i}(): pass" for i in range(1, 401)]
+    large_content = "\n".join(lines)
+    hunk1 = DiffHunk(old_start=100, old_lines=5, new_start=100, new_lines=5, content="")
+    hunk2 = DiffHunk(old_start=250, old_lines=5, new_start=250, new_lines=5, content="")
+    large_cfile = ChangedFile(
+        path="src/large.py",
+        status="modified",
+        content=large_content,
+        hunks=[hunk1, hunk2],
+    )
+
+    formatted = engine._format_changed_file_context(large_cfile)
+    assert "1: def line_1(): pass" in formatted
+    assert "30: def line_30(): pass" in formatted
+    assert "surrounding lines omitted for brevity" in formatted
+    assert "100: def line_100(): pass" in formatted
+    assert "250: def line_250(): pass" in formatted
+    assert "trailing lines omitted for brevity" in formatted
+
+
+def test_build_prompt_with_deleted_and_related_files() -> None:
+    """Verifies that deleted files and related files sections are correctly rendered."""
+    engine = ReviewEngine()
+    deleted_cfile = ChangedFile(
+        path="src/deprecated.py",
+        status="deleted",
+        content=None,
+    )
+    context = GitReviewContext(
+        repo_path=".",
+        base_revision="main",
+        head_revision="HEAD",
+        base_commit="a" * 40,
+        head_commit="b" * 40,
+        raw_diff="diff --git a/src/deprecated.py b/src/deprecated.py",
+        changed_files={"src/deprecated.py": deleted_cfile},
+        related_files={"src/helper.py": "def do_helper(): return 42\n"},
+    )
+
+    prompt = engine._build_prompt(context, [])
+    assert "### Changed File: `src/deprecated.py` *(deleted)*" in prompt
+    assert "## Relevant Surrounding Code & Related Helpers" in prompt
+    assert "### Context File: `src/helper.py`" in prompt
+    assert "def do_helper(): return 42" in prompt
+
+
+def test_git_context_collector_parse_line_imports() -> None:
+    """Verifies _parse_line_imports handles relative, dotted, and standard module imports."""
+    from verifycraft.review.git import GitContextCollector
+
+    # Relative import without subpath
+    mods1 = GitContextCollector._parse_line_imports("from . import utils", parent_dir="src/pkg")
+    assert "src/pkg" in mods1
+
+    # Relative import with subpath
+    mods2 = GitContextCollector._parse_line_imports("from .sub import utils", parent_dir="src/pkg")
+    assert "src/pkg/sub" in mods2
+    assert "sub" in mods2
+
+    # Relative import with parent_dir = "."
+    mods3 = GitContextCollector._parse_line_imports("from .sub import utils", parent_dir=".")
+    assert "sub" in mods3
+    assert "./sub" not in mods3
+
+    mods3b = GitContextCollector._parse_line_imports("from . import utils", parent_dir=".")
+    assert mods3b == set()
+
+    # From dotted import
+    mods4 = GitContextCollector._parse_line_imports("from foo.bar import baz", parent_dir="src")
+    assert "foo.bar" in mods4
+    assert "foo" in mods4
+    assert "foo/bar" in mods4
+
+    # Import statement
+    mods5 = GitContextCollector._parse_line_imports("import mymod.core", parent_dir="src")
+    assert "mymod.core" in mods5
+    assert "mymod" in mods5
+    assert "mymod/core" in mods5
+
+    # Empty or non-import line
+    assert GitContextCollector._parse_line_imports("   ", parent_dir="src") == set()
+    assert GitContextCollector._parse_line_imports("x = 42", parent_dir="src") == set()
+
+
+def test_git_context_collector_build_candidate_paths() -> None:
+    """Verifies _build_candidate_paths generates sibling helpers, types, and test paths."""
+    from verifycraft.review.git import GitContextCollector
+
+    collector = GitContextCollector(".")
+    candidates = collector._build_candidate_paths(
+        imported_modules={"mymod"},
+        changed_paths=["src/api/views.py"],
+    )
+
+    assert "mymod.py" in candidates
+    assert "src/mymod.py" in candidates
+    assert "src/api/helpers.py" in candidates
+    assert "src/api/types.py" in candidates
+    assert "tests/test_views.py" in candidates
+    assert "tests/src/api/test_views.py" in candidates
+
+
+def test_is_valid_file_and_line_related_files_and_suffixes() -> None:
+    """Verifies _is_valid_file_and_line checks related files bounds and suffix matching."""
+    engine = ReviewEngine()
+    context = GitReviewContext(
+        repo_path=".",
+        base_revision="main",
+        head_revision="HEAD",
+        base_commit="a" * 40,
+        head_commit="b" * 40,
+        raw_diff="",
+        changed_files={
+            "src/pkg/service.py": ChangedFile(
+                path="src/pkg/service.py",
+                status="modified",
+                content="line 1\nline 2\nline 3\n",
+            )
+        },
+        related_files={"src/shared/helpers.py": "def helper1(): pass\ndef helper2(): pass\n"},
+    )
+
+    # Valid line in related files
+    assert engine._is_valid_file_and_line("src/shared/helpers.py", 2, context) is True
+    # Line out of bounds in related files
+    assert engine._is_valid_file_and_line("src/shared/helpers.py", 50, context) is False
+    # None line in related files
+    assert engine._is_valid_file_and_line("src/shared/helpers.py", None, context) is True
+
+    # Suffix matching for changed file
+    assert engine._is_valid_file_and_line("service.py", 2, context) is True
+    assert engine._is_valid_file_and_line("service.py", 99, context) is False
+    assert engine._is_valid_file_and_line("service.py", None, context) is True
+
+    # Invalid non-integer line string in _has_valid_source_location
+    assert engine._has_valid_source_location(["src/shared/helpers.py:not_a_num"], context) is True
+    assert engine._has_valid_source_location(["unknown.py:10"], context) is False
+
+
+def test_review_engine_review_context_override() -> None:
+    """Verifies that ReviewEngine.review accepts and uses a context_override."""
+    from verifycraft.contracts.review import ReviewRequest
+
+    engine = ReviewEngine()
+    custom_context = GitReviewContext(
+        repo_path=".",
+        base_revision="main",
+        head_revision="HEAD",
+        base_commit="a" * 40,
+        head_commit="b" * 40,
+        raw_diff="diff --git a/test.py b/test.py",
+        changed_files={
+            "test.py": ChangedFile(
+                path="test.py",
+                status="modified",
+                content="def run(): pass\n",
+            )
+        },
+        related_files={},
+    )
+
+    req = ReviewRequest(
+        repo_path=".",
+        base_revision="main",
+        head_revision="HEAD",
+        provider="none",
+    )
+
+    report = engine.review(req, context_override=custom_context)
+    assert report.model_info is not None
+    assert report.model_info.provider == "none"

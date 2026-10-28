@@ -247,6 +247,40 @@ class GitContextCollector:
         except GitError:
             return None
 
+    @staticmethod
+    def _parse_line_imports(line: str, parent_dir: str) -> set[str]:
+        """Parse imported module names from a single Python source line."""
+        modules: set[str] = set()
+        stripped = line.strip()
+        if not stripped:
+            return modules
+
+        rel_match = re.match(r"^from \.([\w\.]*) import", stripped)
+        if rel_match:
+            rel_mod = rel_match.group(1)
+            if rel_mod:
+                rel_path = rel_mod.replace(".", "/")
+                if parent_dir and parent_dir != ".":
+                    modules.add(f"{parent_dir}/{rel_path}")
+                modules.add(rel_path)
+            elif parent_dir and parent_dir != ".":
+                modules.add(parent_dir)
+            return modules
+
+        from_match = re.match(r"^from ([\w\.]+) import", stripped)
+        if from_match:
+            full_mod = from_match.group(1)
+            modules.update({full_mod, full_mod.split(".")[0], full_mod.replace(".", "/")})
+            return modules
+
+        import_match = re.match(r"^import ([\w\.]+)", stripped)
+        if import_match:
+            full_mod = import_match.group(1)
+            modules.update({full_mod, full_mod.split(".")[0], full_mod.replace(".", "/")})
+            return modules
+
+        return modules
+
     def _extract_imported_modules(self, changed_files: dict[str, ChangedFile]) -> set[str]:
         """Scan changed Python files for imported module base names, submodules, and imports."""
         imported_modules: set[str] = set()
@@ -255,34 +289,7 @@ class GitContextCollector:
                 continue
             parent_dir = str(Path(cfile.path).parent)
             for line in cfile.content.splitlines():
-                line = line.strip()
-                # Relative import: from . import xyz or from .xyz import abc
-                rel_match = re.match(r"^from \.([\w\.]*) import", line)
-                if rel_match:
-                    rel_mod = rel_match.group(1)
-                    if rel_mod:
-                        rel_path = rel_mod.replace(".", "/")
-                        if parent_dir and parent_dir != ".":
-                            imported_modules.add(f"{parent_dir}/{rel_path}")
-                        imported_modules.add(rel_path)
-                    elif parent_dir and parent_dir != ".":
-                        imported_modules.add(parent_dir)
-                    continue
-
-                from_match = re.match(r"^from ([\w\.]+) import", line)
-                if from_match:
-                    full_mod = from_match.group(1)
-                    imported_modules.add(full_mod)
-                    imported_modules.add(full_mod.split(".")[0])
-                    imported_modules.add(full_mod.replace(".", "/"))
-                    continue
-
-                import_match = re.match(r"^import ([\w\.]+)", line)
-                if import_match:
-                    full_mod = import_match.group(1)
-                    imported_modules.add(full_mod)
-                    imported_modules.add(full_mod.split(".")[0])
-                    imported_modules.add(full_mod.replace(".", "/"))
+                imported_modules.update(self._parse_line_imports(line, parent_dir))
         return imported_modules
 
     def _build_candidate_paths(

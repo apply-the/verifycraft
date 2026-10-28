@@ -33,6 +33,95 @@ from verifycraft.review.providers.gemini import GeminiReviewerAdapter
 from verifycraft.review.requirements import ParsedRequirement, RequirementsParser
 
 
+def _check_line_in_content(line_no: int | None, content: str | None) -> bool:
+    """Validate that line_no falls within content line bounds, or is None."""
+    if line_no is None or not content:
+        return True
+    return 1 <= line_no <= len(content.splitlines())
+
+
+def _merge_intervals(intervals: list[tuple[int, int]]) -> list[tuple[int, int]]:
+    """Sort and merge overlapping or adjacent (start, end) line intervals."""
+    if not intervals:
+        return []
+    sorted_intervals = sorted(intervals, key=lambda x: x[0])
+    merged: list[tuple[int, int]] = [sorted_intervals[0]]
+    for start, end in sorted_intervals[1:]:
+        prev_start, prev_end = merged[-1]
+        if start <= prev_end + 1:
+            merged[-1] = (prev_start, max(prev_end, end))
+        else:
+            merged.append((start, end))
+    return merged
+
+
+def _render_windowed_chunks(
+    lines: list[str], merged: list[tuple[int, int]], total_lines: int
+) -> str:
+    """Render 1-indexed lines with omission markers between intervals."""
+    formatted_chunks: list[str] = []
+    prev_end = 0
+    for start, end in merged:
+        if prev_end > 0 and start > prev_end + 1:
+            omitted = start - prev_end - 1
+            formatted_chunks.append(
+                f"... [{omitted} surrounding lines omitted for brevity "
+                f"(lines {prev_end + 1}-{start - 1}); see diff] ..."
+            )
+        for i in range(start, end + 1):
+            formatted_chunks.append(f"{i}: {lines[i - 1]}")
+        prev_end = end
+
+    if prev_end < total_lines:
+        omitted = total_lines - prev_end
+        formatted_chunks.append(
+            f"... [{omitted} trailing lines omitted for brevity "
+            f"(lines {prev_end + 1}-{total_lines}); see diff] ..."
+        )
+    return "\n".join(formatted_chunks)
+
+
+def _format_prompt_head(context: Any) -> str:
+    """Format repository head revision or uncommitted worktree description."""
+    if getattr(context, "is_working_tree", False) or getattr(
+        context, "head_revision", ""
+    ).upper() in ("WORKTREE", "WORKING_TREE"):
+        return (
+            f"WORKTREE (Uncommitted working-tree modifications relative to base "
+            f"{context.base_revision} [{context.base_commit[:8]}])"
+        )
+    return f"{context.head_revision} ({context.head_commit[:8]})"
+
+
+def _format_related_files_section(
+    related_files: dict[str, str], changed_files: dict[str, Any]
+) -> list[str]:
+    """Format related helper files, excluding files already in changed_files."""
+    unique = {p: c for p, c in related_files.items() if p not in changed_files}
+    if not unique:
+        return []
+    parts = [
+        "## Relevant Surrounding Code & Related Helpers",
+        "*(Compensating controls, imported helpers, and existing tests)*",
+        "",
+    ]
+    for path, content in unique.items():
+        parts.extend([f"### Context File: `{path}`", "```python", content, "```", ""])
+    return parts
+
+
+def _format_requirements_section(requirements: list[ParsedRequirement]) -> list[str]:
+    """Format explicit requirements into markdown list."""
+    if not requirements:
+        return []
+    parts = ["## Explicit Requirements", ""]
+    for req in requirements:
+        src = f" ({req.source_file}:{req.line_number})" if req.source_file else ""
+        parts.append(f"- **[{req.id}]**{src}: {req.text}")
+    parts.append("")
+    return parts
+
+
 class ReviewEngine:
     """Core code review engine providing parity across Python SDK and CLI."""
 
@@ -447,29 +536,15 @@ class ReviewEngine:
         """Validate that file_path exists in context and line_no is within file bounds."""
         cfile = context.changed_files.get(file_path)
         if cfile is not None:
-            if line_no is None:
-                return True
-            if cfile.content:
-                total_lines = len(cfile.content.splitlines())
-                return 1 <= line_no <= total_lines
-            return True
+            return _check_line_in_content(line_no, cfile.content)
 
         if file_path in context.related_files:
-            if line_no is None:
-                return True
-            content = context.related_files[file_path]
-            total_lines = len(content.splitlines())
-            return 1 <= line_no <= total_lines
+            return _check_line_in_content(line_no, context.related_files[file_path])
 
         # Suffix matching for paths
         for k, cfile in context.changed_files.items():
             if k.endswith(f"/{file_path}") or file_path.endswith(f"/{k}"):
-                if line_no is None:
-                    return True
-                if cfile.content:
-                    total_lines = len(cfile.content.splitlines())
-                    return 1 <= line_no <= total_lines
-                return True
+                return _check_line_in_content(line_no, cfile.content)
 
         return False
 
@@ -670,56 +745,32 @@ class ReviewEngine:
 
         lines = cfile.content.splitlines()
         total_lines = len(lines)
-
-        # Small enough file: include full source with line numbers
         if total_lines <= max_lines_per_file:
             return "\n".join(f"{i}: {line}" for i, line in enumerate(lines, start=1))
 
-        # Larger file: select preamble (imports/headers) + windows around hunks
-        intervals: list[tuple[int, int]] = []
-        # Preamble: lines 1 to min(30, total_lines)
-        intervals.append((1, min(30, total_lines)))
-
-        # Surrounding windows around hunks
+        intervals: list[tuple[int, int]] = [(1, min(30, total_lines))]
         for hunk in cfile.hunks:
             h_start = max(1, hunk.new_start - context_window)
             h_end = min(total_lines, hunk.new_start + max(hunk.new_lines, 1) + context_window)
             intervals.append((h_start, h_end))
 
-        # Sort and merge intervals
-        intervals.sort(key=lambda x: x[0])
-        merged: list[tuple[int, int]] = []
-        for start, end in intervals:
-            if not merged:
-                merged.append((start, end))
-            else:
-                prev_start, prev_end = merged[-1]
-                if start <= prev_end + 1:
-                    merged[-1] = (prev_start, max(prev_end, end))
-                else:
-                    merged.append((start, end))
+        merged = _merge_intervals(intervals)
+        return _render_windowed_chunks(lines, merged, total_lines)
 
-        formatted_chunks: list[str] = []
-        prev_end = 0
-        for start, end in merged:
-            if prev_end > 0 and start > prev_end + 1:
-                omitted_count = start - prev_end - 1
-                formatted_chunks.append(
-                    f"... [{omitted_count} surrounding lines omitted for brevity "
-                    f"(lines {prev_end + 1}-{start - 1}); see diff] ..."
-                )
-            for i in range(start, end + 1):
-                formatted_chunks.append(f"{i}: {lines[i - 1]}")
-            prev_end = end
-
-        if prev_end < total_lines:
-            omitted_count = total_lines - prev_end
-            formatted_chunks.append(
-                f"... [{omitted_count} trailing lines omitted for brevity "
-                f"(lines {prev_end + 1}-{total_lines}); see diff] ..."
-            )
-
-        return "\n".join(formatted_chunks)
+    def _format_changed_files_section(self, changed_files: dict[str, ChangedFile]) -> list[str]:
+        """Format surrounding context for changed files."""
+        parts = [
+            "## Changed Files (Surrounding Implementation Context)",
+            "*(Numbered lines showing surrounding functions, classes, and imports)*",
+            "",
+        ]
+        for path, cfile in changed_files.items():
+            if cfile.status == "deleted":
+                parts.extend([f"### Changed File: `{path}` *(deleted)*", ""])
+                continue
+            file_repr = self._format_changed_file_context(cfile)
+            parts.extend([f"### Changed File: `{path}`", "```python", file_repr, "```", ""])
+        return parts
 
     def _build_prompt(
         self,
@@ -727,19 +778,7 @@ class ReviewEngine:
         requirements: list[ParsedRequirement],
     ) -> str:
         """Construct the prompt sent to the reviewer model adapter."""
-        if getattr(context, "is_working_tree", False) or getattr(
-            context, "head_revision", ""
-        ).upper() in (
-            "WORKTREE",
-            "WORKING_TREE",
-        ):
-            head_str = (
-                f"WORKTREE (Uncommitted working-tree modifications relative to base "
-                f"{context.base_revision} [{context.base_commit[:8]}])"
-            )
-        else:
-            head_str = f"{context.head_revision} ({context.head_commit[:8]})"
-
+        head_str = _format_prompt_head(context)
         parts = [
             "# Code Review Request",
             "",
@@ -770,63 +809,13 @@ class ReviewEngine:
             ]
         )
 
-        if getattr(context, "changed_files", None):
-            parts.extend(
-                [
-                    "## Changed Files (Surrounding Implementation Context)",
-                    "*(Numbered lines showing surrounding functions, classes, and imports)*",
-                    "",
-                ]
-            )
-            for path, cfile in context.changed_files.items():
-                if cfile.status == "deleted":
-                    parts.extend([f"### Changed File: `{path}` *(deleted)*", ""])
-                    continue
-                file_repr = self._format_changed_file_context(cfile)
-                parts.extend(
-                    [
-                        f"### Changed File: `{path}`",
-                        "```python",
-                        file_repr,
-                        "```",
-                        "",
-                    ]
-                )
+        changed_files = getattr(context, "changed_files", None)
+        if changed_files:
+            parts.extend(self._format_changed_files_section(changed_files))
 
-        unique_related = {
-            path: content
-            for path, content in getattr(context, "related_files", {}).items()
-            if path not in getattr(context, "changed_files", {})
-        }
-        if unique_related:
-            parts.extend(
-                [
-                    "## Relevant Surrounding Code & Related Helpers",
-                    "*(Compensating controls, imported helpers, and existing tests)*",
-                    "",
-                ]
-            )
-            for path, content in unique_related.items():
-                parts.extend(
-                    [
-                        f"### Context File: `{path}`",
-                        "```python",
-                        content,
-                        "```",
-                        "",
-                    ]
-                )
+        related_files = getattr(context, "related_files", None)
+        if related_files:
+            parts.extend(_format_related_files_section(related_files, changed_files or {}))
 
-        if requirements:
-            parts.extend(
-                [
-                    "## Explicit Requirements",
-                    "",
-                ]
-            )
-            for req in requirements:
-                src = f" ({req.source_file}:{req.line_number})" if req.source_file else ""
-                parts.append(f"- **[{req.id}]**{src}: {req.text}")
-            parts.append("")
-
+        parts.extend(_format_requirements_section(requirements))
         return "\n".join(parts)

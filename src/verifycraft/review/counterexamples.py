@@ -10,6 +10,8 @@ from dataclasses import dataclass
 from verifycraft.contracts.review import ConventionalLabel, ReviewFinding
 from verifycraft.review.git import GitReviewContext
 
+GROUNDING_STATIC_CONTROL_TAG: str = "[Grounding: Statically detected compensating control]"
+
 
 @dataclass(frozen=True)
 class CallInfo:
@@ -252,7 +254,7 @@ class CounterexampleChecker:
                 # it only enforces expiration if the helper actually raises an exception
                 if call.is_statement_expr and not helper_raises:
                     continue
-                prefix = "[Grounding: Statically detected compensating control]"
+                prefix = GROUNDING_STATIC_CONTROL_TAG
                 return (
                     f"Candidate issue {finding.id}{req_info} on '{finding.file_path}' "
                     f"claiming missing expiration was challenged: {prefix} "
@@ -274,7 +276,7 @@ class CounterexampleChecker:
                 continue
             if call.is_statement_expr:
                 continue
-            prefix = "[Grounding: Statically detected compensating control]"
+            prefix = GROUNDING_STATIC_CONTROL_TAG
             return (
                 f"Candidate issue {finding.id}{req_info} on '{finding.file_path}' "
                 f"claiming missing expiration was challenged: {prefix} "
@@ -327,7 +329,7 @@ class CounterexampleChecker:
             return scope_note
 
         if self._has_expires_at_check(scope, subject_token, max_line=effective_max_line):
-            prefix = "[Grounding: Statically detected compensating control]"
+            prefix = GROUNDING_STATIC_CONTROL_TAG
             return (
                 f"Candidate issue {finding.id}{req_info} on '{finding.file_path}' "
                 f"claiming missing expiration was challenged: {prefix} "
@@ -361,7 +363,7 @@ class CounterexampleChecker:
         scope = self._find_enclosing_scope(tree, finding.line)
         if self._has_zero_division_guard(scope, finding.line):
             req_info = f" ({', '.join(finding.requirement_ids)})" if finding.requirement_ids else ""
-            prefix = "[Grounding: Statically detected compensating control]"
+            prefix = GROUNDING_STATIC_CONTROL_TAG
             return (
                 f"Candidate issue {finding.id}{req_info} on '{finding.file_path}' "
                 f"claiming unhandled zero division was challenged: {prefix} "
