@@ -1079,7 +1079,8 @@ def _print_aggregate_metrics(
     agg_b: AggregateVariantSummary,
     agg_c: AggregateVariantSummary,
     agg_rep: AggregateVariantSummary,
-    is_simulated: bool,
+    gate_eval: dict[str, Any] | None = None,
+    is_simulated: bool = False,
 ) -> None:
     """Print comparative aggregate summary table."""
     sim_note = " (Simulated Estimate)" if is_simulated else ""
@@ -1187,7 +1188,116 @@ def _print_aggregate_metrics(
     print("  3. Replay Pipeline Fidelity (B candidates -> VC pipeline):")
     print("     Replaying B's exact raw candidates through VerifyCraft confirms")
     print("     pipeline filtering independently of model nondeterminism.")
+    if gate_eval:
+        print("  4. Defensible Release Decision Policy:")
+        print(f"     Gate Status:         {gate_eval['status']}")
+        print(f"     Recommendation:      {gate_eval['recommendation']}")
+        quality_str = "PASS" if gate_eval["quality_criteria_passed"] else "FAIL"
+        print(f"     Quality Criteria:    {quality_str}")
+        print("     Maintainer Approval: REQUIRED (Never emitted autonomously)")
     print("=" * 92)
+
+
+def assess_release_gate(
+    mode: str,
+    live_active: bool,
+    credentials_available: bool,
+    live_provider_call_completed: bool,
+    agg_b: AggregateVariantSummary,
+    agg_c: AggregateVariantSummary,
+) -> dict[str, Any]:
+    """Evaluate defensible multi-stage release decision policy.
+
+    Explicitly separates:
+    1. Credentials availability
+    2. Live provider call completion
+    3. Live evaluation completion
+    4. Objective quality criteria pass
+    5. Maintainer manual approval (never granted autonomously)
+    """
+    failures: list[str] = []
+
+    if agg_c.actionable_precision < 0.85:
+        failures.append(
+            f"Actionable precision ({agg_c.actionable_precision:.1%}) < 85.0% threshold"
+        )
+    if agg_c.defect_recall < 0.90:
+        failures.append(f"Defect recall ({agg_c.defect_recall:.1%}) < 90.0% threshold")
+    if agg_c.invalid_locations > 0:
+        failures.append(f"Invalid code locations detected ({agg_c.invalid_locations} found)")
+    if agg_c.defect_recall < agg_b.defect_recall:
+        failures.append(
+            f"Recall regression: VerifyCraft ({agg_c.defect_recall:.1%}) < "
+            f"Direct Context ({agg_b.defect_recall:.1%})"
+        )
+    if agg_c.actionable_precision < agg_b.actionable_precision:
+        failures.append(
+            f"Precision regression: VerifyCraft ({agg_c.actionable_precision:.1%}) < "
+            f"Direct Context ({agg_b.actionable_precision:.1%})"
+        )
+
+    quality_passed = len(failures) == 0
+
+    if mode == "simulated":
+        status = "SIMULATED_TEST_ONLY"
+        recommendation = "NO-GO (Simulated Benchmark Only — Real-Provider Live Validation Required)"
+        summary_text = (
+            "Hermetic simulated evaluation passes contract and fixture checks, "
+            "but cannot satisfy the v0.2.0 release gate. Empirical live provider "
+            "validation is required."
+        )
+    elif not credentials_available:
+        status = "BLOCKED"
+        recommendation = "NO-GO (Live Evaluation Blocked — Missing Credentials)"
+        summary_text = (
+            "Live evaluation could not execute because neither GEMINI_API_KEY nor "
+            "GOOGLE_API_KEY was found in the environment."
+        )
+    elif not live_provider_call_completed:
+        status = "PROVIDER_CALL_FAILED"
+        recommendation = "NO-GO (Live Provider Calls Failed During Evaluation)"
+        summary_text = "Live evaluation started, but provider calls failed or timed out."
+    elif not quality_passed:
+        status = "FAILED_QUALITY_GATE"
+        recommendation = f"NO-GO (Quality Criteria Not Met: {'; '.join(failures)})"
+        summary_text = "Live evaluation completed, but quality thresholds were not satisfied."
+    else:
+        status = "PENDING_MAINTAINER_APPROVAL"
+        recommendation = (
+            "PENDING_MAINTAINER_APPROVAL (Automated live evaluation passed; manual "
+            "review of Conventional Comments, false positives, and requirement assessments "
+            "required before release)"
+        )
+        summary_text = (
+            "All automated quality criteria passed (precision, recall, zero invalid locations, "
+            "positive delta over direct baseline). Maintainer manual review of Conventional "
+            "Comments and requirements truthfulness is required prior to tagging or "
+            "publishing v0.2.0."
+        )
+
+    return {
+        "status": status,
+        "recommendation": recommendation,
+        "summary": summary_text,
+        "credentials_available": credentials_available,
+        "live_provider_call_completed": live_provider_call_completed,
+        "live_evaluation_completed": live_active,
+        "quality_criteria_passed": quality_passed,
+        "maintainer_approval_granted": False,
+        "quality_audit": {
+            "actionable_precision": agg_c.actionable_precision,
+            "actionable_precision_passed": agg_c.actionable_precision >= 0.85,
+            "defect_recall": agg_c.defect_recall,
+            "defect_recall_passed": agg_c.defect_recall >= 0.90,
+            "invalid_locations": agg_c.invalid_locations,
+            "invalid_locations_passed": agg_c.invalid_locations == 0,
+            "value_add_over_baseline": (
+                agg_c.defect_recall >= agg_b.defect_recall
+                and agg_c.actionable_precision >= agg_b.actionable_precision
+            ),
+            "failures": failures,
+        },
+    }
 
 
 def run_evaluation(
@@ -1298,14 +1408,29 @@ def run_evaluation(
                 "replay_precision": agg_rep.actionable_precision,
             },
         },
-        "release_recommendation": "GO" if live_active else "NO-GO (Live Gemini Evaluation Blocked)",
+        "release_gate": assess_release_gate(
+            mode=mode,
+            live_active=live_active,
+            credentials_available=bool(api_key),
+            live_provider_call_completed=live_active,
+            agg_b=agg_b,
+            agg_c=agg_c,
+        ),
         "per_case_metrics": [asdict(r) for r in results],
     }
+    summary["release_recommendation"] = summary["release_gate"]["recommendation"]
 
     if verbose:
         _print_evaluation_banner(mode, split, len(cases), summary["model_name"], live_active)
         _print_case_metrics_table(results)
-        _print_aggregate_metrics(agg_a, agg_b, agg_c, agg_rep, is_simulated=(mode == "simulated"))
+        _print_aggregate_metrics(
+            agg_a,
+            agg_b,
+            agg_c,
+            agg_rep,
+            gate_eval=summary["release_gate"],
+            is_simulated=(mode == "simulated"),
+        )
 
     return summary
 
