@@ -1205,17 +1205,20 @@ def assess_release_gate(
     live_provider_call_completed: bool,
     agg_b: AggregateVariantSummary,
     agg_c: AggregateVariantSummary,
+    split: str = "all",
 ) -> dict[str, Any]:
     """Evaluate defensible multi-stage release decision policy.
 
     Explicitly separates:
     1. Credentials availability
     2. Live provider call completion
-    3. Live evaluation completion
+    3. Complete live evaluation completion (all cases, not just subset)
     4. Objective quality criteria pass
     5. Maintainer manual approval (never granted autonomously)
     """
     failures: list[str] = []
+    is_complete_suite = split == "all"
+    live_evaluation_completed = live_active and is_complete_suite
 
     if agg_c.actionable_precision < 0.85:
         failures.append(
@@ -1257,6 +1260,16 @@ def assess_release_gate(
         status = "PROVIDER_CALL_FAILED"
         recommendation = "NO-GO (Live Provider Calls Failed During Evaluation)"
         summary_text = "Live evaluation started, but provider calls failed or timed out."
+    elif not is_complete_suite:
+        status = "PARTIAL_EVALUATION_ONLY"
+        recommendation = (
+            f"NO-GO (Partial Evaluation Only — Complete 'all' split evaluation required "
+            f"for release gate; evaluated '{split}')"
+        )
+        summary_text = (
+            f"Live evaluation was executed on the partial '{split}' subset. The v0.2.0 "
+            f"release gate requires evaluation across the complete suite (all 16 cases)."
+        )
     elif not quality_passed:
         status = "FAILED_QUALITY_GATE"
         recommendation = f"NO-GO (Quality Criteria Not Met: {'; '.join(failures)})"
@@ -1281,7 +1294,9 @@ def assess_release_gate(
         "summary": summary_text,
         "credentials_available": credentials_available,
         "live_provider_call_completed": live_provider_call_completed,
-        "live_evaluation_completed": live_active,
+        "live_evaluation_completed": live_evaluation_completed,
+        "split_evaluated": split,
+        "is_complete_evaluation": is_complete_suite,
         "quality_criteria_passed": quality_passed,
         "maintainer_approval_granted": False,
         "quality_audit": {
@@ -1415,6 +1430,7 @@ def run_evaluation(
             live_provider_call_completed=live_active,
             agg_b=agg_b,
             agg_c=agg_c,
+            split=split,
         ),
         "per_case_metrics": [asdict(r) for r in results],
     }
