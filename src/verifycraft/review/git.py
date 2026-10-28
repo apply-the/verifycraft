@@ -287,7 +287,7 @@ class GitContextCollector:
         for cfile in changed_files.values():
             if not cfile.content or not cfile.path.endswith(".py"):
                 continue
-            parent_dir = str(Path(cfile.path).parent)
+            parent_dir = Path(cfile.path).parent.as_posix()
             for line in cfile.content.splitlines():
                 imported_modules.update(self._parse_line_imports(line, parent_dir))
         return imported_modules
@@ -319,7 +319,7 @@ class GitContextCollector:
         for path in changed_paths_set:
             path_obj = Path(path)
             stem = path_obj.stem
-            parent_dir = str(path_obj.parent)
+            parent_dir = path_obj.parent.as_posix()
 
             # Sibling helpers, interfaces, types, and models in same directory
             if parent_dir and parent_dir != ".":
