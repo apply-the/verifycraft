@@ -61,6 +61,8 @@ class ProviderResponse(BaseModel):
     candidate_findings: list[RawCandidateFinding] = Field(default_factory=list)
     requirement_assessments: list[RawRequirementAssessment] = Field(default_factory=list)
     tokens_used: int | None = Field(default=None)
+    prompt_tokens: int | None = Field(default=None)
+    output_tokens: int | None = Field(default=None)
 
 
 @runtime_checkable

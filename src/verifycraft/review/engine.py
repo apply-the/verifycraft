@@ -237,6 +237,8 @@ class ReviewEngine:
             context_bytes=context.total_context_bytes,
             wall_time_seconds=round(wall_time, 4),
             tokens_used=provider_resp.tokens_used,
+            prompt_tokens=getattr(provider_resp, "prompt_tokens", None),
+            output_tokens=getattr(provider_resp, "output_tokens", None),
         )
 
         resolved_model_name = getattr(

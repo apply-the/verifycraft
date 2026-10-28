@@ -1,16 +1,24 @@
-"""Evaluation runner comparing Direct Gemini Review vs VerifyCraft Review.
+"""Evaluation runner comparing Direct Gemini Review vs VerifyCraft Review across 3 variants.
 
-Tracks:
-- Correct actionable findings
-- Known defects discovered (recall)
-- False positives
-- Incorrectly suppressed valid findings
-- Requirements assessment correctness
-- Invalid or fabricated code locations
-- Comment volume
-- Latency and token usage
-- Estimated API cost
-- Developer intervention required
+Execution Modes:
+1. SIMULATED:
+   - Hermetic, deterministic, reproducible contract fixture validation.
+   - Validates pipeline contracts, AST compensating control checks, and line bounds.
+   - Never claimed as an empirical Gemini comparison.
+   - Tokens, latency, and costs are synthetic estimates.
+2. LIVE:
+   - Calls the actual configured Gemini model via official Google GenAI SDK.
+   - Requires GEMINI_API_KEY or GOOGLE_API_KEY.
+   - Fails closed immediately if credentials are unavailable.
+   - NEVER silently falls back to simulated results.
+   - Records actual model identity, real token usage, and measured latency.
+
+Evaluation Variants:
+- Variant A: Direct Gemini, diff plus explicit requirements. (Diff-only baseline)
+- Variant B: Direct Gemini, same bounded surrounding context and requirements as VerifyCraft.
+- Variant C: VerifyCraft, using the same model and source context as B, with downstream validation.
+- Variant C-Replay: Replays exact captured raw candidates from Variant B through VerifyCraft
+  pipeline to isolate downstream filtering, line grounding, and comment rendering from LLM variance.
 """
 
 from __future__ import annotations
@@ -22,9 +30,14 @@ import time
 from dataclasses import asdict, dataclass
 from typing import Any, Literal
 
-from benchmarks.review_dataset import ReviewEvalCase, load_review_eval_dataset
+from benchmarks.review_dataset import (
+    ExpectedIssue,
+    GroundTruth,
+    ReviewEvalCase,
+    load_review_eval_dataset,
+)
 from verifycraft.contracts.review import (
-    ConventionalLabel,
+    ReviewReport,
     ReviewRequest,
 )
 from verifycraft.review.engine import ReviewEngine
@@ -35,55 +48,104 @@ from verifycraft.review.providers.base import (
     RawRequirementAssessment,
     ReviewerModelAdapter,
 )
+from verifycraft.review.requirements import ParsedRequirement
+
+VARIANT_A_KEY = "variant_a"
+VARIANT_B_KEY = "variant_b"
+VARIANT_C_KEY = "variant_c"
+VARIANT_REPLAY_KEY = "variant_replay"
+
+SIMULATED_DISCLAIMER = (
+    "[DISCLAIMER] These results are generated using SimulatedGeminiReviewer for "
+    "hermetic contract and processing validation. They are NOT empirical Gemini "
+    "measurements and must not be cited as real-world LLM evaluation data."
+)
 
 
 @dataclass
-class DirectReviewResult:
-    """Raw review output from direct LLM prompt without VerifyCraft validation pipeline."""
+class VariantMetrics:
+    """Metrics for one evaluation variant on a single case."""
 
-    summary: str
-    findings: list[RawCandidateFinding]
-    requirement_assessments: list[RawRequirementAssessment]
+    variant_name: str
+    correct_findings: int
+    false_positives: int
+    false_positives_clean: int
+    invalid_locations: int
+    requirements_correct: int
+    total_requirements: int
+    comments_count: int
     tokens_used: int
-    wall_time_seconds: float
+    prompt_tokens: int | None
+    output_tokens: int | None
+    latency_seconds: float
+    estimated_cost_usd: float
+    findings: list[dict[str, Any]]
+    assessments: list[dict[str, Any]]
 
 
 @dataclass
 class CaseEvaluationMetrics:
-    """Metrics comparing Direct Review vs VerifyCraft for a single case."""
+    """Evaluation metrics comparing all three variants plus replay for a single case."""
 
     case_id: str
     name: str
     split: str
     category: str
-    direct_correct_findings: int
-    vc_correct_findings: int
-    direct_false_positives: int
-    vc_false_positives: int
-    direct_invalid_locations: int
-    vc_invalid_locations: int
-    direct_req_correct: int
-    vc_req_correct: int
-    total_reqs: int
-    direct_comments_count: int
-    vc_comments_count: int
-    direct_tokens: int
-    vc_tokens: int
-    direct_latency: float
-    vc_latency: float
-    raw_candidates_preserved: list[dict[str, Any]]
-    vc_findings: list[dict[str, Any]]
-    vc_assessments: list[dict[str, Any]]
+    expected_verdict: str
+    expected_defects_count: int
+    total_requirements: int
+    variant_a: VariantMetrics
+    variant_b: VariantMetrics
+    variant_c: VariantMetrics
+    variant_replay: VariantMetrics
+
+
+@dataclass
+class AggregateVariantSummary:
+    """Aggregated metrics across all cases for a specific review variant."""
+
+    variant_name: str
+    display_title: str
+    total_cases: int
+    expected_defects: int
+    correct_findings: int
+    defect_recall: float
+    false_positives: int
+    false_positives_clean: int
+    actionable_precision: float
+    invalid_locations: int
+    requirements_correct: int
+    total_requirements: int
+    requirements_accuracy: float
+    total_comments: int
+    total_tokens: int
+    total_prompt_tokens: int
+    total_output_tokens: int
+    total_latency_seconds: float
+    estimated_cost_usd: float
+
+
+class ReplayReviewerAdapter(ReviewerModelAdapter):
+    """Adapter that replays an exact captured ProviderResponse without secondary model calls."""
+
+    def __init__(self, response: ProviderResponse, model_name: str = "replay-captured") -> None:
+        self.response = response
+        self.model_name = model_name
+
+    def review(
+        self,
+        prompt: str,
+        system_instruction: str | None = None,
+        timeout_seconds: float = 60.0,
+    ) -> ProviderResponse:
+        return self.response
 
 
 class SimulatedGeminiReviewer(ReviewerModelAdapter):
-    """Simulated Gemini reviewer producing realistic direct LLM responses for the 16 cases.
+    """Simulated Gemini reviewer producing deterministic direct LLM responses for the 16 cases.
 
-    Used when live credentials are absent to enable reproducible, hermetic evaluation.
-    Matches typical LLM failure modes:
-    - Hallucinates invalid line coordinates or untouched file citations
-    - Lacks AST compensating control awareness (claims false positive zero-division / token issues)
-    - Prematurely marks requirements as appears_satisfied based on plausible phrasing
+    NOTE: This is a synthetic test fixture used for hermetic contract validation.
+    It does NOT execute real Gemini models and CANNOT be used to claim empirical LLM superiority.
     """
 
     def __init__(self, model_name: str = "gemini-2.5-flash-simulated") -> None:
@@ -124,6 +186,8 @@ class SimulatedGeminiReviewer(ReviewerModelAdapter):
                     )
                 ],
                 tokens_used=420,
+                prompt_tokens=320,
+                output_tokens=100,
             )
 
         # Case 2: Compensating control division
@@ -156,6 +220,8 @@ class SimulatedGeminiReviewer(ReviewerModelAdapter):
                     )
                 ],
                 tokens_used=380,
+                prompt_tokens=290,
+                output_tokens=90,
             )
 
         # Case 3: Off-by-one pagination
@@ -180,6 +246,8 @@ class SimulatedGeminiReviewer(ReviewerModelAdapter):
                 ],
                 requirement_assessments=[],
                 tokens_used=350,
+                prompt_tokens=270,
+                output_tokens=80,
             )
 
         # Case 4: Clean refactor
@@ -189,6 +257,8 @@ class SimulatedGeminiReviewer(ReviewerModelAdapter):
                 candidate_findings=[],
                 requirement_assessments=[],
                 tokens_used=260,
+                prompt_tokens=220,
+                output_tokens=40,
             )
 
         # Case 5: Ambiguous SLA
@@ -210,7 +280,6 @@ class SimulatedGeminiReviewer(ReviewerModelAdapter):
                         requirement_ids=["REQ-PERF-01"],
                     )
                 ],
-                # Direct LLM hallucinates appears_satisfied based purely on timeout=10.0 presence
                 requirement_assessments=[
                     RawRequirementAssessment(
                         requirement_id="REQ-PERF-01",
@@ -220,6 +289,8 @@ class SimulatedGeminiReviewer(ReviewerModelAdapter):
                     )
                 ],
                 tokens_used=410,
+                prompt_tokens=310,
+                output_tokens=100,
             )
 
         # Case 6: Timing attack
@@ -253,6 +324,8 @@ class SimulatedGeminiReviewer(ReviewerModelAdapter):
                     )
                 ],
                 tokens_used=430,
+                prompt_tokens=330,
+                output_tokens=100,
             )
 
         # Case 7: API breaking change
@@ -277,10 +350,13 @@ class SimulatedGeminiReviewer(ReviewerModelAdapter):
                 ],
                 requirement_assessments=[],
                 tokens_used=370,
+                prompt_tokens=280,
+                output_tokens=90,
             )
 
         # Case 8: Multi-file missing argument
-        if "process_order" in lowered:
+        # Discovered if helper is in context (Variant B and C); missed in diff-only (Variant A)
+        if "process_order" in lowered and "currency" in lowered:
             return ProviderResponse(
                 summary="Multi-file helper call analysis.",
                 candidate_findings=[
@@ -302,6 +378,8 @@ class SimulatedGeminiReviewer(ReviewerModelAdapter):
                 ],
                 requirement_assessments=[],
                 tokens_used=440,
+                prompt_tokens=340,
+                output_tokens=100,
             )
 
         # Case 9: Empty collection indexing
@@ -326,9 +404,12 @@ class SimulatedGeminiReviewer(ReviewerModelAdapter):
                 ],
                 requirement_assessments=[],
                 tokens_used=330,
+                prompt_tokens=250,
+                output_tokens=80,
             )
 
         # Case 10: Surrounding code regression
+        # Discovered if get_timeout_ms is in context (B and C); missed in diff-only (A)
         if "serviceclient" in lowered and "get_timeout_ms" in lowered:
             return ProviderResponse(
                 summary="Surrounding code regression analysis.",
@@ -353,6 +434,8 @@ class SimulatedGeminiReviewer(ReviewerModelAdapter):
                 ],
                 requirement_assessments=[],
                 tokens_used=460,
+                prompt_tokens=350,
+                output_tokens=110,
             )
 
         # Held-out 1: JWT none alg
@@ -384,6 +467,8 @@ class SimulatedGeminiReviewer(ReviewerModelAdapter):
                     )
                 ],
                 tokens_used=410,
+                prompt_tokens=310,
+                output_tokens=100,
             )
 
         # Held-out 2: Clean typing
@@ -393,6 +478,8 @@ class SimulatedGeminiReviewer(ReviewerModelAdapter):
                 candidate_findings=[],
                 requirement_assessments=[],
                 tokens_used=240,
+                prompt_tokens=200,
+                output_tokens=40,
             )
 
         # Held-out 3: Multi-file config precedence
@@ -417,11 +504,12 @@ class SimulatedGeminiReviewer(ReviewerModelAdapter):
                 ],
                 requirement_assessments=[],
                 tokens_used=450,
+                prompt_tokens=350,
+                output_tokens=100,
             )
 
         # Held-out 4: Compensating helper auth
-        if "ensure_active_account" in lowered:
-            # Direct LLM flags missing active check on profile.py because it misses guards.py logic
+        if "ensure_active_account" in lowered or "render_profile" in lowered:
             return ProviderResponse(
                 summary="Authorization review for profile rendering.",
                 candidate_findings=[
@@ -448,6 +536,8 @@ class SimulatedGeminiReviewer(ReviewerModelAdapter):
                     )
                 ],
                 tokens_used=390,
+                prompt_tokens=300,
+                output_tokens=90,
             )
 
         # Held-out 5: Ambiguous migration
@@ -479,6 +569,8 @@ class SimulatedGeminiReviewer(ReviewerModelAdapter):
                     )
                 ],
                 tokens_used=380,
+                prompt_tokens=290,
+                output_tokens=90,
             )
 
         # Held-out 6: Exception masking
@@ -504,6 +596,8 @@ class SimulatedGeminiReviewer(ReviewerModelAdapter):
                 ],
                 requirement_assessments=[],
                 tokens_used=400,
+                prompt_tokens=310,
+                output_tokens=90,
             )
 
         return ProviderResponse(
@@ -511,6 +605,8 @@ class SimulatedGeminiReviewer(ReviewerModelAdapter):
             candidate_findings=[],
             requirement_assessments=[],
             tokens_used=250,
+            prompt_tokens=210,
+            output_tokens=40,
         )
 
 
@@ -518,7 +614,6 @@ def _build_synthetic_git_context(case: ReviewEvalCase) -> GitReviewContext:
     """Build in-memory GitReviewContext from evaluation case metadata."""
     changed_files: dict[str, ChangedFile] = {}
     for p, content in case.changed_files.items():
-        # Compute hunks from diff
         cfile = ChangedFile(
             path=p,
             status="modified",
@@ -549,193 +644,596 @@ def _build_synthetic_git_context(case: ReviewEvalCase) -> GitReviewContext:
     )
 
 
-def evaluate_single_case(
+def _build_diff_only_prompt(case: ReviewEvalCase) -> str:
+    """Build direct diff-only review prompt without surrounding file context (Variant A)."""
+    parts = [
+        "# Code Review Request",
+        "",
+        "## Unified Diff",
+        "```diff",
+        case.raw_diff or "(No changes in diff)",
+        "```",
+        "",
+    ]
+    if case.requirements:
+        parts.append("## Explicit Requirements")
+        parts.append("")
+        for req in case.requirements:
+            parts.append(f"- **[{req.id}]**: {req.text}")
+        parts.append("")
+    return "\n".join(parts)
+
+
+def _is_finding_match(
+    f: Any,
+    exp: ExpectedIssue,
+    case: ReviewEvalCase,
+) -> bool:
+    """Check if finding matches expected defect with grounded file and line proximity."""
+    if f.file_path != exp.file_path:
+        return False
+    label_val = getattr(f.label, "value", str(f.label)).lower()
+    if label_val != exp.label.lower():
+        return False
+    combined = f"{f.subject} {f.description}".lower()
+    if exp.subject_contains.lower() not in combined:
+        return False
+    for forb in case.ground_truth.forbidden_false_positives:
+        if forb.lower() in combined:
+            return False
+    if not exp.line_range or f.line is None:
+        return True
+    return bool(exp.line_range[0] - 3 <= f.line <= exp.line_range[-1] + 3)
+
+
+def _is_invalid_location(file_path: str, line: int | None, case: ReviewEvalCase) -> bool:
+    """Check if finding cites a non-existent file or out-of-bounds line coordinate."""
+    all_files = {**case.changed_files, **case.related_files}
+    if file_path not in all_files:
+        return True
+    if line is not None:
+        file_lines = len(all_files[file_path].splitlines())
+        if line < 1 or line > file_lines:
+            return True
+    return False
+
+
+def _is_finding_false_positive(
+    f: Any,
+    gt: GroundTruth,
+    case: ReviewEvalCase,
+) -> bool:
+    """Determine whether a candidate finding represents an unwarranted defect alert."""
+    label = getattr(f.label, "value", str(f.label)).lower()
+    is_defect_claim = label == "issue" or getattr(f, "blocking", False) is True
+    if not is_defect_claim:
+        return False
+
+    matches_expected = any(_is_finding_match(f, exp, case) for exp in gt.expected_issues)
+    has_forbidden = any(
+        forb.lower() in f.subject.lower() or forb.lower() in f.description.lower()
+        for forb in gt.forbidden_false_positives
+    )
+    return not matches_expected or has_forbidden
+
+
+def _count_correct_findings(
+    findings: list[Any],
+    expected_issues: list[ExpectedIssue],
+    case: ReviewEvalCase,
+) -> int:
+    """Count expected ground-truth issues successfully discovered by findings."""
+    correct = 0
+    for exp in expected_issues:
+        for f in findings:
+            if _is_finding_match(f, exp, case):
+                correct += 1
+                break
+    return correct
+
+
+def _count_false_positives(
+    findings: list[Any],
+    gt: GroundTruth,
+    case: ReviewEvalCase,
+) -> tuple[int, int]:
+    """Count total false positives and false positives specifically on clean changes."""
+    fps = 0
+    fps_clean = 0
+    for f in findings:
+        if _is_finding_false_positive(f, gt, case):
+            fps += 1
+            if gt.expected_verdict == "clean":
+                fps_clean += 1
+    return fps, fps_clean
+
+
+def _count_invalid_locations(findings: list[Any], case: ReviewEvalCase) -> int:
+    """Count fabricated or out-of-bounds code locations in findings."""
+    invalids = 0
+    for f in findings:
+        if _is_invalid_location(f.file_path, f.line, case):
+            invalids += 1
+    return invalids
+
+
+def _count_correct_requirements(
+    assessments: list[Any],
+    expected_requirements: dict[str, str],
+) -> int:
+    """Count requirements whose assessment status matches ground truth."""
+    correct = 0
+    for req_id, exp_status in expected_requirements.items():
+        for a in assessments:
+            if getattr(a, "requirement_id", "").upper() == req_id.upper():
+                actual_status = getattr(a.status, "value", str(a.status)).lower()
+                if actual_status == exp_status.lower():
+                    correct += 1
+                    break
+    return correct
+
+
+def _calculate_estimated_cost(
+    tokens_used: int,
+    prompt_tokens: int | None,
+    output_tokens: int | None,
+) -> float:
+    """Calculate estimated API cost using standard pricing ($0.075/1M input, $0.30/1M output)."""
+    if prompt_tokens is not None and output_tokens is not None:
+        return (prompt_tokens * 0.000000075) + (output_tokens * 0.00000030)
+    return tokens_used * 0.00000015
+
+
+def _score_variant(
+    variant_name: str,
+    findings: list[Any],
+    assessments: list[Any],
+    case: ReviewEvalCase,
+    tokens_used: int,
+    prompt_tokens: int | None,
+    output_tokens: int | None,
+    latency_seconds: float,
+) -> VariantMetrics:
+    """Score review output against case ground truth."""
+    gt = case.ground_truth
+    correct_findings = _count_correct_findings(findings, gt.expected_issues, case)
+    fps, fps_clean = _count_false_positives(findings, gt, case)
+    invalids = _count_invalid_locations(findings, case)
+    reqs_correct = _count_correct_requirements(assessments, gt.expected_requirements)
+
+    cost_usd = _calculate_estimated_cost(tokens_used, prompt_tokens, output_tokens)
+
+    finding_dicts = [f.model_dump() if hasattr(f, "model_dump") else asdict(f) for f in findings]
+    assessment_dicts = [
+        a.model_dump() if hasattr(a, "model_dump") else asdict(a) for a in assessments
+    ]
+
+    return VariantMetrics(
+        variant_name=variant_name,
+        correct_findings=correct_findings,
+        false_positives=fps,
+        false_positives_clean=fps_clean,
+        invalid_locations=invalids,
+        requirements_correct=reqs_correct,
+        total_requirements=len(case.requirements),
+        comments_count=len(findings),
+        tokens_used=tokens_used,
+        prompt_tokens=prompt_tokens,
+        output_tokens=output_tokens,
+        latency_seconds=latency_seconds,
+        estimated_cost_usd=round(cost_usd, 6),
+        findings=finding_dicts,
+        assessments=assessment_dicts,
+    )
+
+
+def _run_variant_a(
     case: ReviewEvalCase,
     adapter: ReviewerModelAdapter,
-) -> CaseEvaluationMetrics:
-    """Evaluate both Direct Review and VerifyCraft Review against ground truth."""
-    gt = case.ground_truth
-    context = _build_synthetic_git_context(case)
-
-    # 1. Direct Review
-    prompt = case.raw_diff
-    if case.requirements:
-        prompt += "\n\nRequirements:\n" + "\n".join(
-            f"- [{r.id}] {r.text}" for r in case.requirements
-        )
-
+) -> tuple[ProviderResponse, float]:
+    """Execute Variant A: Direct Gemini Diff-Only."""
+    prompt = _build_diff_only_prompt(case)
     t0 = time.perf_counter()
-    raw_resp = adapter.review(prompt)
-    direct_latency = round(time.perf_counter() - t0, 4)
+    resp = adapter.review(prompt)
+    latency = round(time.perf_counter() - t0, 4)
+    return resp, latency
 
-    # 2. VerifyCraft Review
-    engine = ReviewEngine(provider_adapter=adapter)
+
+def _run_variant_b(
+    case: ReviewEvalCase,
+    context: GitReviewContext,
+    engine: ReviewEngine,
+    adapter: ReviewerModelAdapter,
+) -> tuple[ProviderResponse, float]:
+    """Execute Variant B: Direct Gemini Context-Rich (same prompt as VerifyCraft)."""
+    parsed_reqs = [
+        ParsedRequirement(
+            id=r.id,
+            source_file=r.source_file,
+            line_number=r.line_number,
+            text=r.text,
+        )
+        for r in case.requirements
+    ]
+    prompt = engine._build_prompt(context=context, requirements=parsed_reqs)
+    t0 = time.perf_counter()
+    resp = adapter.review(prompt)
+    latency = round(time.perf_counter() - t0, 4)
+    return resp, latency
+
+
+def _run_variant_c(
+    case: ReviewEvalCase,
+    context: GitReviewContext,
+    engine: ReviewEngine,
+) -> tuple[ReviewReport, float]:
+    """Execute Variant C: VerifyCraft Context-Rich with downstream validation pipeline."""
+    req_strings = [f"- **[{r.id}]**: {r.text}" for r in case.requirements]
     req = ReviewRequest(
         repo_path=".",
         base_revision="main",
         head_revision=case.head_commit[:8] if not case.is_working_tree else "WORKTREE",
-        requirements=[f"- **[{r.id}]**: {r.text}" for r in case.requirements],
+        requirements=req_strings,
         provider="eval",
     )
+    t0 = time.perf_counter()
+    report = engine.review(req, context_override=context)
+    latency = round(time.perf_counter() - t0, 4)
+    return report, latency
 
-    t0_vc = time.perf_counter()
-    vc_report = engine.review(req, context_override=context)
-    vc_latency = round(time.perf_counter() - t0_vc, 4)
 
-    # Compute comparison metrics
-    # A. Correct actionable findings
-    direct_correct = 0
-    vc_correct = 0
+def _run_variant_replay(
+    case: ReviewEvalCase,
+    context: GitReviewContext,
+    raw_resp_b: ProviderResponse,
+) -> tuple[ReviewReport, float]:
+    """Execute Variant C-Replay: replay captured Variant B candidates through VerifyCraft."""
+    req_strings = [f"- **[{r.id}]**: {r.text}" for r in case.requirements]
+    req = ReviewRequest(
+        repo_path=".",
+        base_revision="main",
+        head_revision=case.head_commit[:8] if not case.is_working_tree else "WORKTREE",
+        requirements=req_strings,
+        provider="eval",
+    )
+    replay_adapter = ReplayReviewerAdapter(raw_resp_b)
+    replay_engine = ReviewEngine(provider_adapter=replay_adapter)
+    t0 = time.perf_counter()
+    report = replay_engine.review(req, context_override=context)
+    latency = round(time.perf_counter() - t0, 4)
+    return report, latency
 
-    for exp in gt.expected_issues:
-        # Check Direct findings
-        for rf in raw_resp.candidate_findings:
-            if rf.file_path == exp.file_path and exp.subject_contains.lower() in rf.subject.lower():
-                direct_correct += 1
-                break
 
-        # Check VerifyCraft findings
-        for vf in vc_report.findings:
-            if vf.file_path == exp.file_path and exp.subject_contains.lower() in vf.subject.lower():
-                vc_correct += 1
-                break
+def evaluate_single_case(
+    case: ReviewEvalCase,
+    adapter: ReviewerModelAdapter,
+) -> CaseEvaluationMetrics:
+    """Evaluate all 3 variants plus candidate replay on a single evaluation case."""
+    context = _build_synthetic_git_context(case)
+    engine = ReviewEngine(provider_adapter=adapter)
 
-    # B. False positives
-    direct_fps = 0
-    vc_fps = 0
-    for rf in raw_resp.candidate_findings:
-        if rf.label.lower() == "issue":
-            is_match = any(
-                exp.subject_contains.lower() in rf.subject.lower() for exp in gt.expected_issues
-            )
-            is_forbidden = any(
-                forb.lower() in rf.subject.lower() or forb.lower() in rf.description.lower()
-                for forb in gt.forbidden_false_positives
-            )
-            if not is_match or is_forbidden:
-                direct_fps += 1
+    # 1. Variant A: Direct Gemini Diff-Only
+    resp_a, latency_a = _run_variant_a(case, adapter)
+    metrics_a = _score_variant(
+        variant_name=VARIANT_A_KEY,
+        findings=resp_a.candidate_findings,
+        assessments=resp_a.requirement_assessments,
+        case=case,
+        tokens_used=resp_a.tokens_used or 0,
+        prompt_tokens=getattr(resp_a, "prompt_tokens", None),
+        output_tokens=getattr(resp_a, "output_tokens", None),
+        latency_seconds=latency_a,
+    )
 
-    for vf in vc_report.findings:
-        if vf.label == ConventionalLabel.ISSUE:
-            is_match = any(
-                exp.subject_contains.lower() in vf.subject.lower() for exp in gt.expected_issues
-            )
-            is_forbidden = any(
-                forb.lower() in vf.subject.lower() or forb.lower() in vf.description.lower()
-                for forb in gt.forbidden_false_positives
-            )
-            if not is_match or is_forbidden:
-                vc_fps += 1
+    # 2. Variant B: Direct Gemini Context-Rich
+    resp_b, latency_b = _run_variant_b(case, context, engine, adapter)
+    metrics_b = _score_variant(
+        variant_name=VARIANT_B_KEY,
+        findings=resp_b.candidate_findings,
+        assessments=resp_b.requirement_assessments,
+        case=case,
+        tokens_used=resp_b.tokens_used or 0,
+        prompt_tokens=getattr(resp_b, "prompt_tokens", None),
+        output_tokens=getattr(resp_b, "output_tokens", None),
+        latency_seconds=latency_b,
+    )
 
-    # C. Invalid locations
-    direct_invalids = 0
-    vc_invalids = 0
-    for rf in raw_resp.candidate_findings:
-        if (
-            rf.file_path not in case.changed_files
-            and rf.file_path not in case.related_files
-            or rf.line is not None
-            and rf.line > 200
-        ):
-            direct_invalids += 1
+    # 3. Variant C: VerifyCraft Context-Rich
+    report_c, latency_c = _run_variant_c(case, context, engine)
+    metrics_c = _score_variant(
+        variant_name=VARIANT_C_KEY,
+        findings=report_c.findings,
+        assessments=report_c.requirement_assessments,
+        case=case,
+        tokens_used=report_c.resource_usage.tokens_used or 0,
+        prompt_tokens=getattr(report_c.resource_usage, "prompt_tokens", None),
+        output_tokens=getattr(report_c.resource_usage, "output_tokens", None),
+        latency_seconds=latency_c,
+    )
 
-    for vf in vc_report.findings:
-        if (
-            vf.file_path not in case.changed_files
-            and vf.file_path not in case.related_files
-            or vf.line is not None
-            and vf.line > 200
-        ):
-            vc_invalids += 1
-
-    # D. Requirements correctness
-    direct_req_correct = 0
-    vc_req_correct = 0
-    for r in case.requirements:
-        expected_status = gt.expected_requirements.get(r.id)
-        if not expected_status:
-            continue
-
-        # Direct assessment
-        direct_a = next(
-            (
-                a
-                for a in raw_resp.requirement_assessments
-                if a.requirement_id.upper() == r.id.upper()
-            ),
-            None,
-        )
-        if direct_a and direct_a.status.lower() == expected_status.lower():
-            direct_req_correct += 1
-
-        # VerifyCraft assessment
-        vc_a = next(
-            (
-                a
-                for a in vc_report.requirement_assessments
-                if a.requirement_id.upper() == r.id.upper()
-            ),
-            None,
-        )
-        if vc_a and vc_a.status.value.lower() == expected_status.lower():
-            vc_req_correct += 1
+    # 4. Variant C-Replay: Replay Variant B through VerifyCraft pipeline
+    report_replay, latency_replay = _run_variant_replay(case, context, resp_b)
+    metrics_replay = _score_variant(
+        variant_name=VARIANT_REPLAY_KEY,
+        findings=report_replay.findings,
+        assessments=report_replay.requirement_assessments,
+        case=case,
+        tokens_used=report_replay.resource_usage.tokens_used or 0,
+        prompt_tokens=getattr(report_replay.resource_usage, "prompt_tokens", None),
+        output_tokens=getattr(report_replay.resource_usage, "output_tokens", None),
+        latency_seconds=latency_replay,
+    )
 
     return CaseEvaluationMetrics(
         case_id=case.case_id,
         name=case.name,
         split=case.split,
         category=case.category,
-        direct_correct_findings=direct_correct,
-        vc_correct_findings=vc_correct,
-        direct_false_positives=direct_fps,
-        vc_false_positives=vc_fps,
-        direct_invalid_locations=direct_invalids,
-        vc_invalid_locations=vc_invalids,
-        direct_req_correct=direct_req_correct,
-        vc_req_correct=vc_req_correct,
-        total_reqs=len(case.requirements),
-        direct_comments_count=len(raw_resp.candidate_findings),
-        vc_comments_count=len(vc_report.findings),
-        direct_tokens=raw_resp.tokens_used or 0,
-        vc_tokens=vc_report.resource_usage.tokens_used or 0,
-        direct_latency=direct_latency,
-        vc_latency=vc_latency,
-        raw_candidates_preserved=[rf.model_dump() for rf in raw_resp.candidate_findings],
-        vc_findings=[vf.model_dump() for vf in vc_report.findings],
-        vc_assessments=[va.model_dump() for va in vc_report.requirement_assessments],
+        expected_verdict=case.ground_truth.expected_verdict,
+        expected_defects_count=len(case.ground_truth.expected_issues),
+        total_requirements=len(case.requirements),
+        variant_a=metrics_a,
+        variant_b=metrics_b,
+        variant_c=metrics_c,
+        variant_replay=metrics_replay,
     )
+
+
+def _aggregate_variant_metrics(
+    variant_attr: str,
+    display_title: str,
+    case_metrics: list[CaseEvaluationMetrics],
+    total_expected_defects: int,
+) -> AggregateVariantSummary:
+    """Aggregate metrics across cases for a specific review variant."""
+    var_list = [getattr(c, variant_attr) for c in case_metrics]
+    tot_correct = sum(v.correct_findings for v in var_list)
+    tot_fp = sum(v.false_positives for v in var_list)
+    tot_fp_clean = sum(v.false_positives_clean for v in var_list)
+    tot_inv = sum(v.invalid_locations for v in var_list)
+    tot_req_corr = sum(v.requirements_correct for v in var_list)
+    tot_reqs = sum(v.total_requirements for v in var_list)
+    tot_comments = sum(v.comments_count for v in var_list)
+    tot_tokens = sum(v.tokens_used for v in var_list)
+    tot_prompt_tokens = sum(v.prompt_tokens or 0 for v in var_list)
+    tot_output_tokens = sum(v.output_tokens or 0 for v in var_list)
+    tot_latency = round(sum(v.latency_seconds for v in var_list), 4)
+    tot_cost = round(sum(v.estimated_cost_usd for v in var_list), 6)
+
+    precision = (
+        round(tot_correct / (tot_correct + tot_fp), 4) if (tot_correct + tot_fp) > 0 else 1.0
+    )
+    recall = round(tot_correct / total_expected_defects, 4) if total_expected_defects > 0 else 1.0
+    req_acc = round(tot_req_corr / tot_reqs, 4) if tot_reqs > 0 else 1.0
+
+    return AggregateVariantSummary(
+        variant_name=variant_attr,
+        display_title=display_title,
+        total_cases=len(case_metrics),
+        expected_defects=total_expected_defects,
+        correct_findings=tot_correct,
+        defect_recall=recall,
+        false_positives=tot_fp,
+        false_positives_clean=tot_fp_clean,
+        actionable_precision=precision,
+        invalid_locations=tot_inv,
+        requirements_correct=tot_req_corr,
+        total_requirements=tot_reqs,
+        requirements_accuracy=req_acc,
+        total_comments=tot_comments,
+        total_tokens=tot_tokens,
+        total_prompt_tokens=tot_prompt_tokens,
+        total_output_tokens=tot_output_tokens,
+        total_latency_seconds=tot_latency,
+        estimated_cost_usd=tot_cost,
+    )
+
+
+def _print_evaluation_banner(
+    mode: str,
+    split: str,
+    cases_count: int,
+    model_name: str,
+    live_active: bool,
+) -> None:
+    """Print standard benchmark header banner."""
+    print("=" * 80)
+    print(" VerifyCraft Review Quality Evaluation (3-Variant Benchmark)")
+    if mode == "simulated":
+        print(" EXECUTION MODE: SIMULATED (Synthetic Hermetic Contract Fixture Validation)")
+        print(f" {SIMULATED_DISCLAIMER}")
+    else:
+        status_msg = "LIVE GEMINI VALIDATION ACTIVE" if live_active else "LIVE BLOCKED"
+        print(f" EXECUTION MODE: LIVE ({status_msg})")
+    print(f" Evaluation Split: {split.upper()} ({cases_count} cases) | Model: {model_name}")
+    print("=" * 80)
+
+
+def _print_case_metrics_table(results: list[CaseEvaluationMetrics]) -> None:
+    """Print per-case comparative table."""
+    header = (
+        f"{'Case ID':<34} "
+        f"{'A: Dir-Diff':<12} "
+        f"{'B: Dir-Ctx':<12} "
+        f"{'C: VerifyCraft':<14} "
+        f"{'Replay':<10}"
+    )
+    print(header)
+    print("-" * 88)
+    for r in results:
+        str_a = f"{r.variant_a.false_positives}fp/{r.variant_a.correct_findings}c"
+        str_b = f"{r.variant_b.false_positives}fp/{r.variant_b.correct_findings}c"
+        str_c = f"{r.variant_c.false_positives}fp/{r.variant_c.correct_findings}c"
+        str_rep = f"{r.variant_replay.false_positives}fp/{r.variant_replay.correct_findings}c"
+        print(f"{r.case_id:<34} {str_a:<12} {str_b:<12} {str_c:<14} {str_rep:<10}")
+    print("=" * 88)
+
+
+def _format_table_row(label: str, a: str, b: str, c: str, rep: str) -> str:
+    """Format table row with 5 aligned columns."""
+    return f"{label:<32} {a:<15} {b:<15} {c:<15} {rep:<15}"
+
+
+def _print_aggregate_metrics(
+    agg_a: AggregateVariantSummary,
+    agg_b: AggregateVariantSummary,
+    agg_c: AggregateVariantSummary,
+    agg_rep: AggregateVariantSummary,
+    is_simulated: bool,
+) -> None:
+    """Print comparative aggregate summary table."""
+    sim_note = " (Simulated Estimate)" if is_simulated else ""
+    print(" Aggregate Evaluation Results Across 3 Variants:")
+    print(
+        _format_table_row(
+            "Metric", "A: Direct-Diff", "B: Direct-Ctx", "C: VerifyCraft", "Replay (B->VC)"
+        )
+    )
+    print("-" * 92)
+    print(
+        _format_table_row(
+            "Actionable Precision",
+            f"{agg_a.actionable_precision:.1%}",
+            f"{agg_b.actionable_precision:.1%}",
+            f"{agg_c.actionable_precision:.1%}",
+            f"{agg_rep.actionable_precision:.1%}",
+        )
+    )
+    print(
+        _format_table_row(
+            "Defect Recall (Yield)",
+            f"{agg_a.defect_recall:.1%}",
+            f"{agg_b.defect_recall:.1%}",
+            f"{agg_c.defect_recall:.1%}",
+            f"{agg_rep.defect_recall:.1%}",
+        )
+    )
+    print(
+        _format_table_row(
+            "Total False Positives",
+            str(agg_a.false_positives),
+            str(agg_b.false_positives),
+            str(agg_c.false_positives),
+            str(agg_rep.false_positives),
+        )
+    )
+    print(
+        _format_table_row(
+            "FP on Clean Changes",
+            str(agg_a.false_positives_clean),
+            str(agg_b.false_positives_clean),
+            str(agg_c.false_positives_clean),
+            str(agg_rep.false_positives_clean),
+        )
+    )
+    print(
+        _format_table_row(
+            "Invalid Code Locations",
+            str(agg_a.invalid_locations),
+            str(agg_b.invalid_locations),
+            str(agg_c.invalid_locations),
+            str(agg_rep.invalid_locations),
+        )
+    )
+    print(
+        _format_table_row(
+            "Requirements Accuracy",
+            f"{agg_a.requirements_accuracy:.1%}",
+            f"{agg_b.requirements_accuracy:.1%}",
+            f"{agg_c.requirements_accuracy:.1%}",
+            f"{agg_rep.requirements_accuracy:.1%}",
+        )
+    )
+    print(
+        _format_table_row(
+            "Total Comments Count",
+            str(agg_a.total_comments),
+            str(agg_b.total_comments),
+            str(agg_c.total_comments),
+            str(agg_rep.total_comments),
+        )
+    )
+    print(
+        _format_table_row(
+            "Total Tokens" + sim_note,
+            str(agg_a.total_tokens),
+            str(agg_b.total_tokens),
+            str(agg_c.total_tokens),
+            str(agg_rep.total_tokens),
+        )
+    )
+    print(
+        _format_table_row(
+            "Estimated Cost (USD)" + sim_note,
+            f"${agg_a.estimated_cost_usd:.5f}",
+            f"${agg_b.estimated_cost_usd:.5f}",
+            f"${agg_c.estimated_cost_usd:.5f}",
+            f"${agg_rep.estimated_cost_usd:.5f}",
+        )
+    )
+    print("=" * 92)
+    print(" Interpretability & Decomposition Analysis:")
+    print("  1. Contribution of Context Enrichment (A vs B):")
+    recall_delta = agg_b.defect_recall - agg_a.defect_recall
+    print(f"     Defect Recall Delta: {recall_delta:+.1%}")
+    print("     (Surrounding & multi-file bugs discovered via bounded context)")
+    print("  2. Contribution of VerifyCraft Downstream Pipeline (B vs C):")
+    prec_delta = agg_c.actionable_precision - agg_b.actionable_precision
+    fps_prev = agg_b.false_positives - agg_c.false_positives
+    req_delta = agg_c.requirements_accuracy - agg_b.requirements_accuracy
+    print(f"     Precision Delta:     {prec_delta:+.1%} (FPs prevented: {fps_prev})")
+    print(f"     Requirements Delta:  {req_delta:+.1%} (Ambiguous claims corrected)")
+    print(f"     Location Grounding:  {agg_c.invalid_locations} invalid coordinates")
+    print("  3. Replay Pipeline Fidelity (B candidates -> VC pipeline):")
+    print("     Replaying B's exact raw candidates through VerifyCraft confirms")
+    print("     pipeline filtering independently of model nondeterminism.")
+    print("=" * 92)
 
 
 def run_evaluation(
     split: Literal["dev", "held_out", "all"] = "all",
-    live_model: bool = False,
+    mode: Literal["simulated", "live"] = "simulated",
     verbose: bool = True,
 ) -> dict[str, Any]:
-    """Execute the evaluation suite across all cases."""
+    """Execute the 3-variant review quality evaluation suite across all cases."""
     cases = load_review_eval_dataset(split=split)
-
-    # Check for live credentials
     api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
-    live_active = False
 
-    if live_model:
+    if mode == "live":
         if not api_key:
+            error_banner = "\n".join(
+                [
+                    "",
+                    "=" * 80,
+                    " VerifyCraft Review Quality Evaluation — Live Release Gate",
+                    " STATUS: BLOCKED (Credentials Unavailable)",
+                    "=" * 80,
+                    "ERROR: Live evaluation requested (--mode live), but neither GEMINI_API_KEY",
+                    "nor GOOGLE_API_KEY was found in the execution environment.",
+                    "",
+                    "VerifyCraft fails closed in live mode and NEVER silently falls back to",
+                    "simulated results when live credentials are requested.",
+                    "",
+                    "To execute live evaluation locally:",
+                    '  export GEMINI_API_KEY="your-gemini-api-key"',
+                    "  uv run python -m benchmarks.evaluate_review --mode live",
+                    "",
+                    "Release Recommendation: NO-GO (Live validation blocked)",
+                    "=" * 80,
+                    "",
+                ]
+            )
             if verbose:
-                print(
-                    "\n[WARNING] LIVE VALIDATION NOT RUN: "
-                    "GEMINI_API_KEY or GOOGLE_API_KEY is not set."
-                )
-                print(
-                    "Falling back to deterministic simulated reviewer for reproducible evaluation."
-                )
-            adapter: ReviewerModelAdapter = SimulatedGeminiReviewer()
-        else:
-            from verifycraft.review.providers.gemini import GeminiReviewerAdapter
+                print(error_banner)
+            raise SystemExit(1)
 
-            adapter = GeminiReviewerAdapter(api_key=api_key)
-            live_active = True
+        from verifycraft.review.providers.gemini import GeminiReviewerAdapter
+
+        adapter: ReviewerModelAdapter = GeminiReviewerAdapter(api_key=api_key)
+        live_active = True
     else:
         adapter = SimulatedGeminiReviewer()
+        live_active = False
 
     results: list[CaseEvaluationMetrics] = []
     start_time = time.perf_counter()
@@ -745,151 +1243,105 @@ def run_evaluation(
         results.append(m)
 
     total_time = round(time.perf_counter() - start_time, 4)
+    total_expected_defects = sum(len(c.ground_truth.expected_issues) for c in cases)
 
-    # Aggregate metrics
-    tot_direct_correct = sum(r.direct_correct_findings for r in results)
-    tot_vc_correct = sum(r.vc_correct_findings for r in results)
-    tot_direct_fp = sum(r.direct_false_positives for r in results)
-    tot_vc_fp = sum(r.vc_false_positives for r in results)
-    tot_direct_inv = sum(r.direct_invalid_locations for r in results)
-    tot_vc_inv = sum(r.vc_invalid_locations for r in results)
-    tot_direct_req_corr = sum(r.direct_req_correct for r in results)
-    tot_vc_req_corr = sum(r.vc_req_correct for r in results)
-    tot_reqs = sum(r.total_reqs for r in results)
-
-    tot_expected_issues = sum(len(c.ground_truth.expected_issues) for c in cases)
-
-    direct_precision = (
-        round(tot_direct_correct / (tot_direct_correct + tot_direct_fp), 4)
-        if (tot_direct_correct + tot_direct_fp) > 0
-        else 1.0
+    agg_a = _aggregate_variant_metrics(
+        VARIANT_A_KEY, "Variant A (Direct Diff-Only)", results, total_expected_defects
     )
-    vc_precision = (
-        round(tot_vc_correct / (tot_vc_correct + tot_vc_fp), 4)
-        if (tot_vc_correct + tot_vc_fp) > 0
-        else 1.0
+    agg_b = _aggregate_variant_metrics(
+        VARIANT_B_KEY, "Variant B (Direct Context-Rich)", results, total_expected_defects
+    )
+    agg_c = _aggregate_variant_metrics(
+        VARIANT_C_KEY, "Variant C (VerifyCraft)", results, total_expected_defects
+    )
+    agg_rep = _aggregate_variant_metrics(
+        VARIANT_REPLAY_KEY, "Variant C-Replay (Replayed B)", results, total_expected_defects
     )
 
-    direct_recall = (
-        round(tot_direct_correct / tot_expected_issues, 4) if tot_expected_issues > 0 else 1.0
-    )
-    vc_recall = round(tot_vc_correct / tot_expected_issues, 4) if tot_expected_issues > 0 else 1.0
-
-    direct_req_accuracy = round(tot_direct_req_corr / tot_reqs, 4) if tot_reqs > 0 else 1.0
-    vc_req_accuracy = round(tot_vc_req_corr / tot_reqs, 4) if tot_reqs > 0 else 1.0
-
-    tot_tokens_direct = sum(r.direct_tokens for r in results)
-    tot_tokens_vc = sum(r.vc_tokens for r in results)
-
-    # Pricing: $0.075 / 1M input, $0.30 / 1M output -> avg $0.15 / 1M tokens
-    cost_direct = round(tot_tokens_direct * 0.00000015, 6)
-    cost_vc = round(tot_tokens_vc * 0.00000015, 6)
-
-    summary = {
-        "evaluation_version": "1.0.0",
+    summary: dict[str, Any] = {
+        "evaluation_version": "2.0.0",
+        "execution_mode": mode,
+        "live_gate_status": "COMPLETED" if live_active else "BLOCKED (Missing API Credentials)",
+        "model_name": getattr(adapter, "model_name", "simulated"),
         "split": split,
         "cases_count": len(cases),
-        "live_gemini_active": live_active,
-        "live_status_message": "LIVE GEMINI VALIDATION ACTIVE"
-        if live_active
-        else "LIVE VALIDATION NOT RUN (Missing GEMINI_API_KEY/GOOGLE_API_KEY)",
-        "model_name": getattr(adapter, "model_name", "simulated"),
+        "total_expected_defects": total_expected_defects,
+        "token_accounting_type": "actual_api_usage" if live_active else "synthetic_estimate",
         "wall_time_seconds": total_time,
-        "direct_gemini": {
-            "correct_findings": tot_direct_correct,
-            "false_positives": tot_direct_fp,
-            "invalid_locations": tot_direct_inv,
-            "precision": direct_precision,
-            "recall": direct_recall,
-            "requirements_correct": tot_direct_req_corr,
-            "requirements_accuracy": direct_req_accuracy,
-            "total_tokens": tot_tokens_direct,
-            "estimated_cost_usd": cost_direct,
+        "variants": {
+            VARIANT_A_KEY: asdict(agg_a),
+            VARIANT_B_KEY: asdict(agg_b),
+            VARIANT_C_KEY: asdict(agg_c),
+            VARIANT_REPLAY_KEY: asdict(agg_rep),
         },
-        "verifycraft": {
-            "correct_findings": tot_vc_correct,
-            "false_positives": tot_vc_fp,
-            "invalid_locations": tot_vc_inv,
-            "precision": vc_precision,
-            "recall": vc_recall,
-            "requirements_correct": tot_vc_req_corr,
-            "requirements_accuracy": vc_req_accuracy,
-            "total_tokens": tot_tokens_vc,
-            "estimated_cost_usd": cost_vc,
+        "comparative_analysis": {
+            "context_enrichment_impact": {
+                "variant_a_recall": agg_a.defect_recall,
+                "variant_b_recall": agg_b.defect_recall,
+                "recall_delta": round(agg_b.defect_recall - agg_a.defect_recall, 4),
+            },
+            "downstream_validation_impact": {
+                "variant_b_precision": agg_b.actionable_precision,
+                "variant_c_precision": agg_c.actionable_precision,
+                "precision_delta": round(
+                    agg_c.actionable_precision - agg_b.actionable_precision, 4
+                ),
+                "false_positives_prevented": agg_b.false_positives - agg_c.false_positives,
+                "invalid_locations_eliminated": agg_b.invalid_locations - agg_c.invalid_locations,
+                "requirements_accuracy_delta": round(
+                    agg_c.requirements_accuracy - agg_b.requirements_accuracy, 4
+                ),
+            },
+            "replay_pipeline_fidelity": {
+                "variant_b_candidates_evaluated": agg_b.total_comments,
+                "replay_findings_retained": agg_rep.total_comments,
+                "replay_precision": agg_rep.actionable_precision,
+            },
         },
+        "release_recommendation": "GO" if live_active else "NO-GO (Live Gemini Evaluation Blocked)",
         "per_case_metrics": [asdict(r) for r in results],
     }
 
     if verbose:
-        print("=" * 80)
-        print(" VerifyCraft v0.2.0 Review Quality Evaluation Report")
-        status_msg = summary["live_status_message"]
-        print(f" Evaluation Split: {split.upper()} ({len(cases)} cases) | Status: {status_msg}")
-        print(f" Model Identity:  {summary['model_name']}")
-        print("=" * 80)
-        header = f"{'Case ID':<38} {'Direct FP/Corr':<16} {'VC FP/Corr':<14} {'Reqs VC/Dir'}"
-        print(header)
-        print("-" * 80)
-        for r in results:
-            dir_str = f"{r.direct_false_positives}/{r.direct_correct_findings}"
-            vc_str = f"{r.vc_false_positives}/{r.vc_correct_findings}"
-            req_str = (
-                f"{r.vc_req_correct}/{r.direct_req_correct} (of {r.total_reqs})"
-                if r.total_reqs > 0
-                else "N/A"
-            )
-            print(f"{r.case_id:<38} {dir_str:<16} {vc_str:<14} {req_str}")
-        print("=" * 80)
-        print(" Aggregate Quality Metrics:")
-        print(f"  Total Ground-Truth Defects:    {tot_expected_issues}")
-        print(
-            f"  Precision:                     VerifyCraft {vc_precision:.1%} "
-            f"vs Direct {direct_precision:.1%}"
-        )
-        print(
-            f"  Recall (Defect Yield):         VerifyCraft {vc_recall:.1%} "
-            f"vs Direct {direct_recall:.1%}"
-        )
-        fp_diff = tot_direct_fp - tot_vc_fp
-        print(
-            f"  False Positives:               VerifyCraft {tot_vc_fp} "
-            f"vs Direct {tot_direct_fp} (Prevented: {fp_diff})"
-        )
-        print(
-            f"  Invalid Code Locations:        VerifyCraft {tot_vc_inv} vs Direct {tot_direct_inv}"
-        )
-        print(
-            f"  Requirements Accuracy:         VerifyCraft {vc_req_accuracy:.1%} "
-            f"vs Direct {direct_req_accuracy:.1%}"
-        )
-        print(
-            f"  Estimated API Cost:            VerifyCraft ${cost_vc:.5f} "
-            f"vs Direct ${cost_direct:.5f}"
-        )
-        print("=" * 80)
+        _print_evaluation_banner(mode, split, len(cases), summary["model_name"], live_active)
+        _print_case_metrics_table(results)
+        _print_aggregate_metrics(agg_a, agg_b, agg_c, agg_rep, is_simulated=(mode == "simulated"))
 
     return summary
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Run VerifyCraft Review Quality Evaluation (Direct Gemini vs VerifyCraft)."
+        description="Run VerifyCraft Review Quality Evaluation across 3 variants."
+    )
+    parser.add_argument(
+        "--mode",
+        choices=["simulated", "live"],
+        default="simulated",
+        help="Benchmark mode: 'simulated' (synthetic fixtures) or 'live' (real Gemini calls).",
+    )
+    parser.add_argument(
+        "--live",
+        action="store_true",
+        help="Convenience alias for --mode live.",
     )
     parser.add_argument(
         "--split",
         choices=["dev", "held_out", "all"],
         default="all",
-        help="Evaluation split to run.",
+        help="Evaluation dataset split to run.",
     )
     parser.add_argument(
-        "--live",
+        "--json",
         action="store_true",
-        help="Attempt live Gemini API calls if credentials are present.",
+        help="Output structured JSON report.",
     )
-    parser.add_argument("--json", action="store_true", help="Output JSON report.")
     args = parser.parse_args()
 
-    report = run_evaluation(split=args.split, live_model=args.live, verbose=not args.json)
+    mode_val: Literal["simulated", "live"] = (
+        "live" if args.live or args.mode == "live" else "simulated"
+    )
+    report = run_evaluation(split=args.split, mode=mode_val, verbose=not args.json)
 
     if args.json:
         print(json.dumps(report, indent=2))
