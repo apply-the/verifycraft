@@ -97,6 +97,8 @@ def test_gemini_review_successful_json(mock_genai_env: MagicMock) -> None:
     }
     """
     mock_response.usage_metadata.total_token_count = 512
+    mock_response.usage_metadata.prompt_token_count = 350
+    mock_response.usage_metadata.candidates_token_count = 162
     mock_client.models.generate_content.return_value = mock_response
     adapter._client = mock_client
 
@@ -110,6 +112,8 @@ def test_gemini_review_successful_json(mock_genai_env: MagicMock) -> None:
     assert len(result.requirement_assessments) == 1
     assert result.requirement_assessments[0].requirement_id == "REQ-AUTH-01"
     assert result.tokens_used == 512
+    assert result.prompt_tokens == 350
+    assert result.output_tokens == 162
 
 
 def test_gemini_review_markdown_fenced_json(mock_genai_env: MagicMock) -> None:

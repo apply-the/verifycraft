@@ -107,6 +107,9 @@ pip install -e ".[dev]"
 
 ## Semantic Code Review (CLI & SDK)
 
+> [!NOTE]
+> The Semantic Code Review engine (`verifycraft review`, `ReviewEngine`, and provider adapters) is the core feature set of the upcoming **v0.2.0** milestone currently implemented on `main` and undergoing empirical validation. The published release on PyPI remains `v0.1.0` (verification engine primitive).
+
 VerifyCraft v0.2.0 introduces the **first working, requirements-aware semantic code review engine**:
 It maps Git diffs to relevant surrounding context, evaluates against optional requirements, runs semantic analysis via model providers (e.g. Gemini) or deterministic adapters, checks for compensating controls in surrounding files, and generates actionable [Conventional Comments](https://conventionalcomments.org/) and structured JSON.
 
@@ -367,14 +370,20 @@ pytest --cov=verifycraft
 
 ## How to Reproduce Benchmarks
 
-VerifyCraft includes reproducible benchmark comparisons against a deterministic keyword-heuristic baseline across 5 canonical scenarios (comparisons against real LLM review baselines are scheduled for `v0.2.0`):
+VerifyCraft includes reproducible benchmark suites for both the verification engine contracts and the semantic code review engine:
 
 ```bash
-# Run benchmark evaluation with human-readable summary
+# 1. Run Verification Contract Invariants benchmark (5 canonical scenarios against keyword heuristic):
 uv run python -m benchmarks.evaluate
-
-# Emit benchmark results as machine-readable JSON
 uv run python -m benchmarks.evaluate --json
+
+# 2. Run Review Quality Evaluation benchmark (3-variant evaluation across 16 cases):
+# Simulated mode (deterministic contract fixture validation, no API key required):
+uv run python -m benchmarks.evaluate_review --mode simulated
+
+# Live mode (calls Gemini API; requires GEMINI_API_KEY):
+export GEMINI_API_KEY="your-gemini-api-key"
+uv run python -m benchmarks.evaluate_review --mode live
 ```
 
 ---

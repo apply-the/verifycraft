@@ -153,12 +153,27 @@ class GeminiReviewerAdapter(ReviewerModelAdapter):
 
         raw_text = response.text or ""
         tokens_used = None
+        prompt_tokens = None
+        output_tokens = None
         if hasattr(response, "usage_metadata") and response.usage_metadata:
             tokens_used = getattr(response.usage_metadata, "total_token_count", None)
+            prompt_tokens = getattr(response.usage_metadata, "prompt_token_count", None)
+            output_tokens = getattr(response.usage_metadata, "candidates_token_count", None)
 
-        return self._parse_json_response(raw_text, tokens_used=tokens_used)
+        return self._parse_json_response(
+            raw_text,
+            tokens_used=tokens_used,
+            prompt_tokens=prompt_tokens,
+            output_tokens=output_tokens,
+        )
 
-    def _parse_json_response(self, text: str, tokens_used: int | None = None) -> ProviderResponse:
+    def _parse_json_response(
+        self,
+        text: str,
+        tokens_used: int | None = None,
+        prompt_tokens: int | None = None,
+        output_tokens: int | None = None,
+    ) -> ProviderResponse:
         """Parse and sanitize JSON response from model."""
         clean = text.strip()
         # Strip markdown fences if present
@@ -215,6 +230,8 @@ class GeminiReviewerAdapter(ReviewerModelAdapter):
                 candidate_findings=raw_findings,
                 requirement_assessments=raw_assessments,
                 tokens_used=tokens_used,
+                prompt_tokens=prompt_tokens,
+                output_tokens=output_tokens,
             )
         except Exception as e:
             raise ProviderCallError(f"Failed to validate model response structure: {e}") from e
