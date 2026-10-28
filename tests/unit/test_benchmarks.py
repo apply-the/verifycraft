@@ -276,8 +276,25 @@ def test_evaluate_release_gate_decision_policy() -> None:
     assert len(fail_gate["quality_audit"]["failures"]) >= 3
     assert "Quality Criteria Not Met" in fail_gate["recommendation"]
 
-    # 5. Live mode with quality criteria PASS -> PENDING_MAINTAINER_APPROVAL
-    # (Must never emit an unconditional GO!)
+    # 5. Live mode with quality criteria PASS but on subset (e.g. held_out)
+    # -> PARTIAL_EVALUATION_ONLY
+    subset_gate = assess_release_gate(
+        mode="live",
+        live_active=True,
+        credentials_available=True,
+        live_provider_call_completed=True,
+        agg_b=base_agg,
+        agg_c=vc_agg_pass,
+        split="held_out",
+    )
+    assert subset_gate["status"] == "PARTIAL_EVALUATION_ONLY"
+    assert subset_gate["live_evaluation_completed"] is False
+    assert subset_gate["is_complete_evaluation"] is False
+    assert "Partial Evaluation Only" in subset_gate["recommendation"]
+    assert "held_out" in subset_gate["recommendation"]
+
+    # 6. Live mode with complete evaluation ('all') and quality criteria PASS
+    # -> PENDING_MAINTAINER_APPROVAL (Must never emit an unconditional GO!)
     pass_gate = assess_release_gate(
         mode="live",
         live_active=True,
@@ -285,8 +302,11 @@ def test_evaluate_release_gate_decision_policy() -> None:
         live_provider_call_completed=True,
         agg_b=base_agg,
         agg_c=vc_agg_pass,
+        split="all",
     )
     assert pass_gate["status"] == "PENDING_MAINTAINER_APPROVAL"
+    assert pass_gate["live_evaluation_completed"] is True
+    assert pass_gate["is_complete_evaluation"] is True
     assert pass_gate["quality_criteria_passed"] is True
     assert pass_gate["maintainer_approval_granted"] is False
     assert "PENDING_MAINTAINER_APPROVAL" in pass_gate["recommendation"]
