@@ -247,27 +247,58 @@ class GitContextCollector:
         except GitError:
             return None
 
+    @staticmethod
+    def _parse_line_imports(line: str, parent_dir: str) -> set[str]:
+        """Parse imported module names from a single Python source line."""
+        modules: set[str] = set()
+        stripped = line.strip()
+        if not stripped:
+            return modules
+
+        rel_match = re.match(r"^from \.([\w\.]*) import", stripped)
+        if rel_match:
+            rel_mod = rel_match.group(1)
+            if rel_mod:
+                rel_path = rel_mod.replace(".", "/")
+                if parent_dir and parent_dir != ".":
+                    modules.add(f"{parent_dir}/{rel_path}")
+                modules.add(rel_path)
+            elif parent_dir and parent_dir != ".":
+                modules.add(parent_dir)
+            return modules
+
+        from_match = re.match(r"^from ([\w\.]+) import", stripped)
+        if from_match:
+            full_mod = from_match.group(1)
+            modules.update({full_mod, full_mod.split(".")[0], full_mod.replace(".", "/")})
+            return modules
+
+        import_match = re.match(r"^import ([\w\.]+)", stripped)
+        if import_match:
+            full_mod = import_match.group(1)
+            modules.update({full_mod, full_mod.split(".")[0], full_mod.replace(".", "/")})
+            return modules
+
+        return modules
+
     def _extract_imported_modules(self, changed_files: dict[str, ChangedFile]) -> set[str]:
-        """Scan changed Python files for imported module base names."""
+        """Scan changed Python files for imported module base names, submodules, and imports."""
         imported_modules: set[str] = set()
         for cfile in changed_files.values():
             if not cfile.content or not cfile.path.endswith(".py"):
                 continue
+            parent_dir = Path(cfile.path).parent.as_posix()
             for line in cfile.content.splitlines():
-                line = line.strip()
-                import_match = re.match(r"^from ([\w\.]+) import", line)
-                if import_match:
-                    imported_modules.add(import_match.group(1).split(".")[0])
-                import_match2 = re.match(r"^import ([\w\.]+)", line)
-                if import_match2:
-                    imported_modules.add(import_match2.group(1).split(".")[0])
+                imported_modules.update(self._parse_line_imports(line, parent_dir))
         return imported_modules
 
     def _build_candidate_paths(
         self, imported_modules: set[str], changed_paths: Iterable[str]
     ) -> list[str]:
-        """Construct candidate file paths for helpers, modules, and tests."""
+        """Construct candidate file paths for helpers, modules, callers, interfaces, and tests."""
         candidate_paths: list[str] = []
+        changed_paths_set = set(changed_paths)
+
         for mod in imported_modules:
             candidate_paths.extend(
                 [
@@ -275,22 +306,58 @@ class GitContextCollector:
                     f"src/{mod}.py",
                     f"{mod}/__init__.py",
                     f"src/{mod}/__init__.py",
-                    "helpers.py",
-                    "src/helpers.py",
                 ]
             )
 
-        for path in changed_paths:
-            stem = Path(path).stem
+        candidate_paths.extend(
+            [
+                "helpers.py",
+                "src/helpers.py",
+            ]
+        )
+
+        for path in changed_paths_set:
+            path_obj = Path(path)
+            stem = path_obj.stem
+            parent_dir = path_obj.parent.as_posix()
+
+            # Sibling helpers, interfaces, types, and models in same directory
+            if parent_dir and parent_dir != ".":
+                for sibling in (
+                    "helpers.py",
+                    "types.py",
+                    "interfaces.py",
+                    "protocols.py",
+                    "models.py",
+                ):
+                    candidate_paths.append(f"{parent_dir}/{sibling}")
+
+            # Associated tests
             candidate_paths.extend(
                 [
                     f"tests/test_{stem}.py",
                     f"test_{stem}.py",
                     f"tests/{stem}_test.py",
+                    f"tests/unit/test_{stem}.py",
                 ]
             )
+            if parent_dir and parent_dir != ".":
+                candidate_paths.extend(
+                    [
+                        f"tests/{parent_dir}/test_{stem}.py",
+                        f"tests/unit/{parent_dir}/test_{stem}.py",
+                    ]
+                )
 
-        return candidate_paths
+        # Retain order but deduplicate and exclude already changed files
+        seen: set[str] = set()
+        deduped: list[str] = []
+        for p in candidate_paths:
+            if p not in seen and p not in changed_paths_set:
+                seen.add(p)
+                deduped.append(p)
+
+        return deduped
 
     def find_related_context(
         self,

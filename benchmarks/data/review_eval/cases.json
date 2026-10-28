@@ -1,0 +1,646 @@
+[
+  {
+    "case_id": "dev_01_req_violation_auth_expiry",
+    "name": "Requirement Violation: Token Expiration Check Omitted",
+    "split": "dev",
+    "category": "requirement_violation",
+    "version": "1.0.0",
+    "provenance": "Reproduced from real auth session bug pattern (PR #4 audit)",
+    "base_commit": "1111111111111111111111111111111111111111",
+    "head_commit": "2222222222222222222222222222222222222222",
+    "is_working_tree": false,
+    "changed_files": {
+      "src/auth/service.py": "import time\nfrom src.auth.tokens import verify_signature\n\nclass AuthService:\n    def authenticate(self, token_str: str) -> bool:\n        token = verify_signature(token_str)\n        if not token:\n            return False\n        # Bug: Omitted expiration check (token.expires_at < time.time())\n        return token.is_valid\n"
+    },
+    "raw_diff": "diff --git a/src/auth/service.py b/src/auth/service.py\n--- a/src/auth/service.py\n+++ b/src/auth/service.py\n@@ -5,3 +5,6 @@\n     def authenticate(self, token_str: str) -> bool:\n         token = verify_signature(token_str)\n+        if not token:\n+            return False\n+        return token.is_valid\n",
+    "related_files": {
+      "src/auth/tokens.py": "class Token:\n    def __init__(self, is_valid: bool, expires_at: float):\n        self.is_valid = is_valid\n        self.expires_at = expires_at\n\ndef verify_signature(token_str: str) -> Token | None:\n    return Token(is_valid=True, expires_at=100.0) if token_str else None\n"
+    },
+    "requirements": [
+      {
+        "id": "REQ-AUTH-01",
+        "source_file": "docs/security.md",
+        "line_number": 15,
+        "text": "User authentication must reject expired tokens before issuing a session."
+      }
+    ],
+    "ground_truth": {
+      "expected_verdict": "has_defects",
+      "expected_issues": [
+        {
+          "file_path": "src/auth/service.py",
+          "line_range": [
+            7,
+            10
+          ],
+          "subject_contains": "expiration",
+          "label": "issue",
+          "blocking": true,
+          "severity": "critical",
+          "rationale": "authenticate() grants access without checking token.expires_at."
+        }
+      ],
+      "forbidden_false_positives": [
+        "Missing signature verification"
+      ],
+      "expected_requirements": {
+        "REQ-AUTH-01": "not_satisfied"
+      },
+      "acceptable_uncertainties": [],
+      "multi_file_context_needed": false,
+      "rationale": "Missing expiration check directly violates REQ-AUTH-01."
+    }
+  },
+  {
+    "case_id": "dev_02_compensating_control_division",
+    "name": "Compensating Control: Guard Protects Division",
+    "split": "dev",
+    "category": "compensating_control",
+    "version": "1.0.0",
+    "provenance": "Reproduced from metrics calculation pull request with guard check",
+    "base_commit": "3333333333333333333333333333333333333333",
+    "head_commit": "4444444444444444444444444444444444444444",
+    "is_working_tree": false,
+    "changed_files": {
+      "src/analytics/metrics.py": "def calculate_error_rate(errors: int, total: int) -> float:\n    if total == 0:\n        return 0.0\n    return errors / total\n"
+    },
+    "raw_diff": "diff --git a/src/analytics/metrics.py b/src/analytics/metrics.py\n--- a/src/analytics/metrics.py\n+++ b/src/analytics/metrics.py\n@@ -1,1 +1,4 @@\n+def calculate_error_rate(errors: int, total: int) -> float:\n+    if total == 0:\n+        return 0.0\n+    return errors / total\n",
+    "related_files": {},
+    "requirements": [
+      {
+        "id": "REQ-MATH-01",
+        "source_file": "docs/specs.md",
+        "line_number": 42,
+        "text": "Error rate calculation must handle zero total requests without crashing."
+      }
+    ],
+    "ground_truth": {
+      "expected_verdict": "clean",
+      "expected_issues": [],
+      "forbidden_false_positives": [
+        "ZeroDivisionError",
+        "division by zero"
+      ],
+      "expected_requirements": {
+        "REQ-MATH-01": "appears_satisfied"
+      },
+      "acceptable_uncertainties": [],
+      "multi_file_context_needed": false,
+      "rationale": "Guard 'if total == 0: return 0.0' completely prevents ZeroDivisionError."
+    }
+  },
+  {
+    "case_id": "dev_03_logic_regression_off_by_one",
+    "name": "Logic Regression: Off-by-one in Pagination Slicing",
+    "split": "dev",
+    "category": "logic_regression",
+    "version": "1.0.0",
+    "provenance": "Common off-by-one boundary regression in pagination APIs",
+    "base_commit": "5555555555555555555555555555555555555555",
+    "head_commit": "6666666666666666666666666666666666666666",
+    "is_working_tree": false,
+    "changed_files": {
+      "src/utils/pagination.py": "from typing import Sequence, Any\n\ndef paginate_items(items: Sequence[Any], page: int, page_size: int) -> list[Any]:\n    offset = (page - 1) * page_size\n    # Regression: offset + page_size - 1 drops the last item of each page\n    return list(items[offset : offset + page_size - 1])\n"
+    },
+    "raw_diff": "diff --git a/src/utils/pagination.py b/src/utils/pagination.py\n--- a/src/utils/pagination.py\n+++ b/src/utils/pagination.py\n@@ -3,2 +3,4 @@\n def paginate_items(items: Sequence[Any], page: int, page_size: int) -> list[Any]:\n     offset = (page - 1) * page_size\n-    return list(items[offset : offset + page_size])\n+    return list(items[offset : offset + page_size - 1])\n",
+    "related_files": {},
+    "requirements": [],
+    "ground_truth": {
+      "expected_verdict": "has_defects",
+      "expected_issues": [
+        {
+          "file_path": "src/utils/pagination.py",
+          "line_range": [
+            5,
+            6
+          ],
+          "subject_contains": "pagination",
+          "label": "issue",
+          "blocking": true,
+          "severity": "high",
+          "rationale": "Slicing to offset + page_size - 1 returns page_size - 1 items."
+        }
+      ],
+      "forbidden_false_positives": [],
+      "expected_requirements": {},
+      "acceptable_uncertainties": [],
+      "multi_file_context_needed": false,
+      "rationale": "Classic off-by-one bug drops the last item from every page."
+    }
+  },
+  {
+    "case_id": "dev_04_clean_refactor",
+    "name": "Clean Refactor: Helper Extraction Without Semantic Change",
+    "split": "dev",
+    "category": "clean_change",
+    "version": "1.0.0",
+    "provenance": "Clean refactoring PR from standard Python library pattern",
+    "base_commit": "7777777777777777777777777777777777777777",
+    "head_commit": "8888888888888888888888888888888888888888",
+    "is_working_tree": false,
+    "changed_files": {
+      "src/formatters/text.py": "def _clean_token(tok: str) -> str:\n    return tok.strip().lower()\n\ndef format_tags(raw_tags: list[str]) -> list[str]:\n    return [_clean_token(t) for t in raw_tags if t.strip()]\n"
+    },
+    "raw_diff": "diff --git a/src/formatters/text.py b/src/formatters/text.py\n--- a/src/formatters/text.py\n+++ b/src/formatters/text.py\n@@ -1,2 +1,5 @@\n+def _clean_token(tok: str) -> str:\n+    return tok.strip().lower()\n+\n def format_tags(raw_tags: list[str]) -> list[str]:\n-    return [t.strip().lower() for t in raw_tags if t.strip()]\n+    return [_clean_token(t) for t in raw_tags if t.strip()]\n",
+    "related_files": {},
+    "requirements": [],
+    "ground_truth": {
+      "expected_verdict": "clean",
+      "expected_issues": [],
+      "forbidden_false_positives": [
+        "syntax error",
+        "logic regression",
+        "breaking change"
+      ],
+      "expected_requirements": {},
+      "acceptable_uncertainties": [],
+      "multi_file_context_needed": false,
+      "rationale": "Purely extracts a private helper; semantics and return values are identical."
+    }
+  },
+  {
+    "case_id": "dev_05_ambiguous_requirement_timeout",
+    "name": "Ambiguous Requirement: Unverifiable 'Reasonably Fast' SLA",
+    "split": "dev",
+    "category": "ambiguous_requirement",
+    "version": "1.0.0",
+    "provenance": "Realistic ambiguous customer requirement specification",
+    "base_commit": "9999999999999999999999999999999999999999",
+    "head_commit": "0000000000000000000000000000000000000000",
+    "is_working_tree": false,
+    "changed_files": {
+      "src/api/client.py": "import requests\n\ndef fetch_remote_catalog(endpoint: str) -> dict:\n    resp = requests.get(endpoint, timeout=10.0)\n    resp.raise_for_status()\n    return resp.json()\n"
+    },
+    "raw_diff": "diff --git a/src/api/client.py b/src/api/client.py\n--- a/src/api/client.py\n+++ b/src/api/client.py\n@@ -2,2 +2,4 @@\n def fetch_remote_catalog(endpoint: str) -> dict:\n-    resp = requests.get(endpoint)\n+    resp = requests.get(endpoint, timeout=10.0)\n     resp.raise_for_status()\n     return resp.json()\n",
+    "related_files": {},
+    "requirements": [
+      {
+        "id": "REQ-PERF-01",
+        "source_file": "docs/sla.md",
+        "line_number": 8,
+        "text": "Network catalog calls should be reasonably fast and not block indefinitely."
+      }
+    ],
+    "ground_truth": {
+      "expected_verdict": "unclear",
+      "expected_issues": [],
+      "forbidden_false_positives": [
+        "Missing timeout",
+        "Syntax error"
+      ],
+      "expected_requirements": {
+        "REQ-PERF-01": "unclear"
+      },
+      "acceptable_uncertainties": [
+        "What exact threshold constitutes 'reasonably fast'?"
+      ],
+      "multi_file_context_needed": false,
+      "rationale": "'Reasonably fast' is subjective and not statically verifiable without explicit SLA threshold."
+    }
+  },
+  {
+    "case_id": "dev_06_security_timing_attack",
+    "name": "Security Defect: Non-Constant-Time Secret Comparison",
+    "split": "dev",
+    "category": "security_sensitive",
+    "version": "1.0.0",
+    "provenance": "CWE-208 timing attack vulnerability pattern in webhook verification",
+    "base_commit": "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2",
+    "head_commit": "b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3",
+    "is_working_tree": false,
+    "changed_files": {
+      "src/crypto/signatures.py": "import hmac\nimport hashlib\n\ndef verify_webhook_signature(payload: bytes, secret: str, expected_sig: str) -> bool:\n    computed = hmac.new(secret.encode(), payload, hashlib.sha256).hexdigest()\n    # Security Bug: == is susceptible to timing side-channel attacks\n    return computed == expected_sig\n"
+    },
+    "raw_diff": "diff --git a/src/crypto/signatures.py b/src/crypto/signatures.py\n--- a/src/crypto/signatures.py\n+++ b/src/crypto/signatures.py\n@@ -3,2 +3,5 @@\n def verify_webhook_signature(payload: bytes, secret: str, expected_sig: str) -> bool:\n+    computed = hmac.new(secret.encode(), payload, hashlib.sha256).hexdigest()\n+    return computed == expected_sig\n",
+    "related_files": {},
+    "requirements": [
+      {
+        "id": "REQ-SEC-01",
+        "source_file": "docs/security.md",
+        "line_number": 22,
+        "text": "Cryptographic signature validation must use constant-time comparison to prevent timing attacks."
+      }
+    ],
+    "ground_truth": {
+      "expected_verdict": "has_defects",
+      "expected_issues": [
+        {
+          "file_path": "src/crypto/signatures.py",
+          "line_range": [
+            6,
+            7
+          ],
+          "subject_contains": "timing",
+          "label": "issue",
+          "blocking": true,
+          "severity": "high",
+          "rationale": "computed == expected_sig is vulnerable to timing attacks; use hmac.compare_digest."
+        }
+      ],
+      "forbidden_false_positives": [
+        "HMAC key length issue"
+      ],
+      "expected_requirements": {
+        "REQ-SEC-01": "not_satisfied"
+      },
+      "acceptable_uncertainties": [],
+      "multi_file_context_needed": false,
+      "rationale": "Direct violation of constant-time requirement REQ-SEC-01."
+    }
+  },
+  {
+    "case_id": "dev_07_api_compatibility_signature_break",
+    "name": "API Compatibility: Breaking Positional Parameter Addition",
+    "split": "dev",
+    "category": "api_compatibility",
+    "version": "1.0.0",
+    "provenance": "Real breaking change regression in public library export API",
+    "base_commit": "c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4",
+    "head_commit": "d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5",
+    "is_working_tree": false,
+    "changed_files": {
+      "src/api/export.py": "from typing import Any\n\n# Breaking change: destination is now a required positional argument with no default\ndef export_data(data: list[Any], destination: str, format: str = 'csv') -> bool:\n    with open(destination, 'w') as f:\n        f.write(str(data))\n    return True\n"
+    },
+    "raw_diff": "diff --git a/src/api/export.py b/src/api/export.py\n--- a/src/api/export.py\n+++ b/src/api/export.py\n@@ -2,2 +2,4 @@\n-def export_data(data: list[Any], format: str = 'csv') -> str:\n+def export_data(data: list[Any], destination: str, format: str = 'csv') -> bool:\n+    with open(destination, 'w') as f:\n+        f.write(str(data))\n",
+    "related_files": {},
+    "requirements": [],
+    "ground_truth": {
+      "expected_verdict": "has_defects",
+      "expected_issues": [
+        {
+          "file_path": "src/api/export.py",
+          "line_range": [
+            4,
+            4
+          ],
+          "subject_contains": "breaking",
+          "label": "issue",
+          "blocking": true,
+          "severity": "high",
+          "rationale": "Adding required positional argument destination breaks existing callers export_data(data)."
+        }
+      ],
+      "forbidden_false_positives": [],
+      "expected_requirements": {},
+      "acceptable_uncertainties": [],
+      "multi_file_context_needed": false,
+      "rationale": "Breaks backward compatibility for library consumers."
+    }
+  },
+  {
+    "case_id": "dev_08_multi_file_missing_import_call",
+    "name": "Multi-File Context: Caller Uses Renamed Helper Method",
+    "split": "dev",
+    "category": "multi_file_context",
+    "version": "1.0.0",
+    "provenance": "Multi-file import mismatch pattern where helper signature changed in separate module",
+    "base_commit": "e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6",
+    "head_commit": "f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1",
+    "is_working_tree": false,
+    "changed_files": {
+      "src/orders/processor.py": "from src.orders.helpers import format_order_summary\n\ndef process_order(order_id: str, items: list[dict]) -> str:\n    # Multi-file bug: format_order_summary in helpers.py expects (order_id, items, currency)\n    return format_order_summary(order_id, items)\n"
+    },
+    "raw_diff": "diff --git a/src/orders/processor.py b/src/orders/processor.py\n--- a/src/orders/processor.py\n+++ b/src/orders/processor.py\n@@ -2,2 +2,4 @@\n def process_order(order_id: str, items: list[dict]) -> str:\n-    return f'Order {order_id}'\n+    return format_order_summary(order_id, items)\n",
+    "related_files": {
+      "src/orders/helpers.py": "def format_order_summary(order_id: str, items: list[dict], currency: str) -> str:\n    return f'[{currency}] Order {order_id}: {len(items)} items'\n"
+    },
+    "requirements": [],
+    "ground_truth": {
+      "expected_verdict": "has_defects",
+      "expected_issues": [
+        {
+          "file_path": "src/orders/processor.py",
+          "line_range": [
+            5,
+            5
+          ],
+          "subject_contains": "argument",
+          "label": "issue",
+          "blocking": true,
+          "severity": "high",
+          "rationale": "format_order_summary requires currency argument as defined in helpers.py."
+        }
+      ],
+      "forbidden_false_positives": [],
+      "expected_requirements": {},
+      "acceptable_uncertainties": [],
+      "multi_file_context_needed": true,
+      "rationale": "Cannot be discovered from single file; requires inspecting helpers.py signature."
+    }
+  },
+  {
+    "case_id": "dev_09_missing_edge_case_empty_collection",
+    "name": "Missing Edge Case: Unchecked Empty Collection Indexing",
+    "split": "dev",
+    "category": "missing_edge_case",
+    "version": "1.0.0",
+    "provenance": "Frequent IndexError on empty input collection in data processing",
+    "base_commit": "a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1",
+    "head_commit": "b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2",
+    "is_working_tree": false,
+    "changed_files": {
+      "src/handlers/users.py": "def get_lead_user_id(users: list[dict]) -> str:\n    # Unhandled empty collection raises IndexError on users[0]\n    primary = users[0]\n    return primary['id']\n"
+    },
+    "raw_diff": "diff --git a/src/handlers/users.py b/src/handlers/users.py\n--- a/src/handlers/users.py\n+++ b/src/handlers/users.py\n@@ -1,1 +1,4 @@\n+def get_lead_user_id(users: list[dict]) -> str:\n+    primary = users[0]\n+    return primary['id']\n",
+    "related_files": {},
+    "requirements": [],
+    "ground_truth": {
+      "expected_verdict": "has_defects",
+      "expected_issues": [
+        {
+          "file_path": "src/handlers/users.py",
+          "line_range": [
+            3,
+            4
+          ],
+          "subject_contains": "empty",
+          "label": "issue",
+          "blocking": true,
+          "severity": "medium",
+          "rationale": "Direct indexing users[0] without length check raises IndexError when users is empty."
+        }
+      ],
+      "forbidden_false_positives": [],
+      "expected_requirements": {},
+      "acceptable_uncertainties": [],
+      "multi_file_context_needed": false,
+      "rationale": "Missing guard for empty list causes runtime IndexError."
+    }
+  },
+  {
+    "case_id": "dev_10_surrounding_code_regression",
+    "name": "Surrounding Code: Class Attribute Default Breaks Unedited Method",
+    "split": "dev",
+    "category": "surrounding_code_regression",
+    "version": "1.0.0",
+    "provenance": "Real bug where modifying __init__ default breaks unedited sibling method",
+    "base_commit": "c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3",
+    "head_commit": "d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4",
+    "is_working_tree": false,
+    "changed_files": {
+      "src/service/client.py": "class ServiceClient:\n    def __init__(self, timeout: int | None = None):\n        # Diff changed default from 30 to None\n        self.timeout = timeout\n\n    def get_timeout_ms(self) -> int:\n        # Unchanged surrounding method raises TypeError: unsupported operand type(s) for *: 'NoneType' and 'int'\n        return self.timeout * 1000\n"
+    },
+    "raw_diff": "diff --git a/src/service/client.py b/src/service/client.py\n--- a/src/service/client.py\n+++ b/src/service/client.py\n@@ -2,2 +2,3 @@\n-    def __init__(self, timeout: int = 30):\n+    def __init__(self, timeout: int | None = None):\n         self.timeout = timeout\n",
+    "related_files": {},
+    "requirements": [],
+    "ground_truth": {
+      "expected_verdict": "has_defects",
+      "expected_issues": [
+        {
+          "file_path": "src/service/client.py",
+          "line_range": [
+            3,
+            4
+          ],
+          "subject_contains": "none",
+          "label": "issue",
+          "blocking": true,
+          "severity": "high",
+          "rationale": "Setting default self.timeout to None causes get_timeout_ms() to raise TypeError."
+        }
+      ],
+      "forbidden_false_positives": [],
+      "expected_requirements": {},
+      "acceptable_uncertainties": [],
+      "multi_file_context_needed": false,
+      "rationale": "Requires viewing unchanged surrounding method get_timeout_ms outside the diff hunk."
+    }
+  },
+  {
+    "case_id": "held_out_01_jwt_none_algorithm",
+    "name": "Held-Out: Insecure JWT 'none' Algorithm Allowed",
+    "split": "held_out",
+    "category": "security_sensitive",
+    "version": "1.0.0",
+    "provenance": "CVE-2015-9235 JWT 'none' algorithm bypass vulnerability reproduction",
+    "base_commit": "e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5",
+    "head_commit": "f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6",
+    "is_working_tree": false,
+    "changed_files": {
+      "src/auth/jwt.py": "import json\nimport base64\n\ndef decode_jwt(raw_jwt: str) -> dict:\n    parts = raw_jwt.split('.')\n    header = json.loads(base64.b64decode(parts[0]))\n    # Security flaw: alg='none' bypasses verification\n    if header.get('alg', '').lower() == 'none':\n        return json.loads(base64.b64decode(parts[1]))\n    raise NotImplementedError('Only verified algorithms supported')\n"
+    },
+    "raw_diff": "diff --git a/src/auth/jwt.py b/src/auth/jwt.py\n--- a/src/auth/jwt.py\n+++ b/src/auth/jwt.py\n@@ -5,3 +5,5 @@\n     header = json.loads(base64.b64decode(parts[0]))\n+    if header.get('alg', '').lower() == 'none':\n+        return json.loads(base64.b64decode(parts[1]))\n     raise NotImplementedError('Only verified algorithms supported')\n",
+    "related_files": {},
+    "requirements": [
+      {
+        "id": "REQ-SEC-05",
+        "source_file": "docs/jwt_policy.md",
+        "line_number": 10,
+        "text": "Unsigned tokens or tokens specifying alg='none' must be strictly rejected."
+      }
+    ],
+    "ground_truth": {
+      "expected_verdict": "has_defects",
+      "expected_issues": [
+        {
+          "file_path": "src/auth/jwt.py",
+          "line_range": [
+            8,
+            9
+          ],
+          "subject_contains": "none",
+          "label": "issue",
+          "blocking": true,
+          "severity": "critical",
+          "rationale": "Accepting alg='none' allows arbitrary token forgery without signature."
+        }
+      ],
+      "forbidden_false_positives": [],
+      "expected_requirements": {
+        "REQ-SEC-05": "not_satisfied"
+      },
+      "acceptable_uncertainties": [],
+      "multi_file_context_needed": false,
+      "rationale": "Insecure alg='none' support directly violates REQ-SEC-05."
+    }
+  },
+  {
+    "case_id": "held_out_02_clean_typing_migration",
+    "name": "Held-Out: Clean Type Annotation Modernization",
+    "split": "held_out",
+    "category": "clean_change",
+    "version": "1.0.0",
+    "provenance": "PEP 585 / PEP 604 type annotation modernization PR",
+    "base_commit": "0101010101010101010101010101010101010101",
+    "head_commit": "0202020202020202020202020202020202020202",
+    "is_working_tree": false,
+    "changed_files": {
+      "src/types/protocol.py": "from collections.abc import Sequence\n\ndef find_matching_ids(ids: Sequence[str], target: str | None) -> list[str]:\n    if target is None:\n        return list(ids)\n    return [i for i in ids if i.startswith(target)]\n"
+    },
+    "raw_diff": "diff --git a/src/types/protocol.py b/src/types/protocol.py\n--- a/src/types/protocol.py\n+++ b/src/types/protocol.py\n@@ -1,3 +1,3 @@\n-from typing import List, Optional\n-def find_matching_ids(ids: List[str], target: Optional[str]) -> List[str]:\n+from collections.abc import Sequence\n+def find_matching_ids(ids: Sequence[str], target: str | None) -> list[str]:\n",
+    "related_files": {},
+    "requirements": [],
+    "ground_truth": {
+      "expected_verdict": "clean",
+      "expected_issues": [],
+      "forbidden_false_positives": [
+        "Type error",
+        "Syntax error"
+      ],
+      "expected_requirements": {},
+      "acceptable_uncertainties": [],
+      "multi_file_context_needed": false,
+      "rationale": "Standard typing modernization without behavioral impact."
+    }
+  },
+  {
+    "case_id": "held_out_03_multi_file_config_precedence",
+    "name": "Held-Out: Config Loading Inverts Precedence Over Defaults",
+    "split": "held_out",
+    "category": "multi_file_context",
+    "version": "1.0.0",
+    "provenance": "Config loader bug where defaults override environment variables",
+    "base_commit": "0303030303030303030303030303030303030303",
+    "head_commit": "0404040404040404040404040404040404040404",
+    "is_working_tree": false,
+    "changed_files": {
+      "src/config/loader.py": "from src.config.defaults import DEFAULT_SETTINGS\n\ndef load_configuration(env_overrides: dict) -> dict:\n    # Regression: Merging defaults on top of env_overrides inverts precedence!\n    result = env_overrides.copy()\n    result.update(DEFAULT_SETTINGS)\n    return result\n"
+    },
+    "raw_diff": "diff --git a/src/config/loader.py b/src/config/loader.py\n--- a/src/config/loader.py\n+++ b/src/config/loader.py\n@@ -4,2 +4,3 @@\n def load_configuration(env_overrides: dict) -> dict:\n-    result = DEFAULT_SETTINGS.copy()\n-    result.update(env_overrides)\n+    result = env_overrides.copy()\n+    result.update(DEFAULT_SETTINGS)\n     return result\n",
+    "related_files": {
+      "src/config/defaults.py": "DEFAULT_SETTINGS = {'host': 'localhost', 'port': 8080, 'debug': False}\n"
+    },
+    "requirements": [],
+    "ground_truth": {
+      "expected_verdict": "has_defects",
+      "expected_issues": [
+        {
+          "file_path": "src/config/loader.py",
+          "line_range": [
+            5,
+            6
+          ],
+          "subject_contains": "precedence",
+          "label": "issue",
+          "blocking": true,
+          "severity": "high",
+          "rationale": "result.update(DEFAULT_SETTINGS) causes defaults to overwrite explicit env_overrides."
+        }
+      ],
+      "forbidden_false_positives": [],
+      "expected_requirements": {},
+      "acceptable_uncertainties": [],
+      "multi_file_context_needed": true,
+      "rationale": "Inverted dictionary merge breaks environment override hierarchy."
+    }
+  },
+  {
+    "case_id": "held_out_04_compensating_helper_auth",
+    "name": "Held-Out: Compensating Control in Imported Authorization Guard",
+    "split": "held_out",
+    "category": "compensating_control",
+    "version": "1.0.0",
+    "provenance": "Authorization helper encapsulation across module boundary",
+    "base_commit": "0505050505050505050505050505050505050505",
+    "head_commit": "0606060606060606060606060606060606060606",
+    "is_working_tree": false,
+    "changed_files": {
+      "src/views/profile.py": "from src.views.guards import ensure_active_account\n\ndef render_profile(user: dict) -> str:\n    ensure_active_account(user)\n    return f'Welcome {user[\"name\"]}'\n"
+    },
+    "raw_diff": "diff --git a/src/views/profile.py b/src/views/profile.py\n--- a/src/views/profile.py\n+++ b/src/views/profile.py\n@@ -1,1 +1,5 @@\n+from src.views.guards import ensure_active_account\n+\n+def render_profile(user: dict) -> str:\n+    ensure_active_account(user)\n+    return f'Welcome {user[\"name\"]}'\n",
+    "related_files": {
+      "src/views/guards.py": "def ensure_active_account(user: dict) -> None:\n    if not user.get('is_active', False):\n        raise PermissionError('Account is inactive')\n"
+    },
+    "requirements": [
+      {
+        "id": "REQ-AUTH-02",
+        "source_file": "docs/auth.md",
+        "line_number": 20,
+        "text": "Profile view must restrict inactive accounts with PermissionError."
+      }
+    ],
+    "ground_truth": {
+      "expected_verdict": "clean",
+      "expected_issues": [],
+      "forbidden_false_positives": [
+        "Missing active check",
+        "PermissionError omitted"
+      ],
+      "expected_requirements": {
+        "REQ-AUTH-02": "appears_satisfied"
+      },
+      "acceptable_uncertainties": [],
+      "multi_file_context_needed": true,
+      "rationale": "ensure_active_account from guards.py enforces active status check."
+    }
+  },
+  {
+    "case_id": "held_out_05_ambiguous_partial_migration",
+    "name": "Held-Out: Partial Field Migration with Ambiguous Spec",
+    "split": "held_out",
+    "category": "ambiguous_requirement",
+    "version": "1.0.0",
+    "provenance": "Database schema migration with dual-write fallback",
+    "base_commit": "0707070707070707070707070707070707070707",
+    "head_commit": "0808080808080808080808080808080808080808",
+    "is_working_tree": false,
+    "changed_files": {
+      "src/models/account.py": "def get_account_identifier(account: dict) -> str:\n    # Ambiguous: specification does not state whether uuid or legacy_id takes priority\n    return str(account.get('uuid') or account.get('legacy_id') or 'unknown')\n"
+    },
+    "raw_diff": "diff --git a/src/models/account.py b/src/models/account.py\n--- a/src/models/account.py\n+++ b/src/models/account.py\n@@ -1,2 +1,3 @@\n def get_account_identifier(account: dict) -> str:\n-    return str(account.get('legacy_id', 'unknown'))\n+    return str(account.get('uuid') or account.get('legacy_id') or 'unknown')\n",
+    "related_files": {},
+    "requirements": [
+      {
+        "id": "REQ-DATA-01",
+        "source_file": "docs/migration.md",
+        "line_number": 5,
+        "text": "Accounts should adopt UUID identifiers during the migration phase."
+      }
+    ],
+    "ground_truth": {
+      "expected_verdict": "unclear",
+      "expected_issues": [],
+      "forbidden_false_positives": [
+        "Syntax error",
+        "Crash bug"
+      ],
+      "expected_requirements": {
+        "REQ-DATA-01": "unclear"
+      },
+      "acceptable_uncertainties": [
+        "Whether fallback to legacy_id is permitted during transition"
+      ],
+      "multi_file_context_needed": false,
+      "rationale": "Specification states 'should adopt' without defining priority or cutover deadline."
+    }
+  },
+  {
+    "case_id": "held_out_06_exception_masking",
+    "name": "Held-Out: Broad Exception Masking Silences Persistence Failures",
+    "split": "held_out",
+    "category": "logic_regression",
+    "version": "1.0.0",
+    "provenance": "Anti-pattern: catch-all except masking critical operational errors",
+    "base_commit": "0909090909090909090909090909090909090909",
+    "head_commit": "1010101010101010101010101010101010101010",
+    "is_working_tree": false,
+    "changed_files": {
+      "src/storage/client.py": "def persist_audit_log(entry: dict, database) -> bool:\n    try:\n        database.write_record('audit', entry)\n        return True\n    except Exception:\n        # Critical error masking: silently ignores all database failures and returns False\n        # without logging or propagating error\n        return False\n"
+    },
+    "raw_diff": "diff --git a/src/storage/client.py b/src/storage/client.py\n--- a/src/storage/client.py\n+++ b/src/storage/client.py\n@@ -1,3 +1,7 @@\n def persist_audit_log(entry: dict, database) -> bool:\n-    database.write_record('audit', entry)\n-    return True\n+    try:\n+        database.write_record('audit', entry)\n+        return True\n+    except Exception:\n+        return False\n",
+    "related_files": {},
+    "requirements": [],
+    "ground_truth": {
+      "expected_verdict": "has_defects",
+      "expected_issues": [
+        {
+          "file_path": "src/storage/client.py",
+          "line_range": [
+            5,
+            7
+          ],
+          "subject_contains": "exception",
+          "label": "issue",
+          "blocking": true,
+          "severity": "high",
+          "rationale": "Bare except Exception silently masks connection and query failures without logging."
+        }
+      ],
+      "forbidden_false_positives": [],
+      "expected_requirements": {},
+      "acceptable_uncertainties": [],
+      "multi_file_context_needed": false,
+      "rationale": "Silently swallowing exceptions breaks observability and audit durability."
+    }
+  }
+]

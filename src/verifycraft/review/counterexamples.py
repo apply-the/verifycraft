@@ -7,8 +7,10 @@ import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from verifycraft.contracts.review import ReviewFinding
+from verifycraft.contracts.review import ConventionalLabel, ReviewFinding
 from verifycraft.review.git import GitReviewContext
+
+GROUNDING_STATIC_CONTROL_TAG: str = "[Grounding: Statically detected compensating control]"
 
 
 @dataclass(frozen=True)
@@ -252,10 +254,13 @@ class CounterexampleChecker:
                 # it only enforces expiration if the helper actually raises an exception
                 if call.is_statement_expr and not helper_raises:
                     continue
+                prefix = GROUNDING_STATIC_CONTROL_TAG
                 return (
                     f"Candidate issue {finding.id}{req_info} on '{finding.file_path}' "
-                    f"claiming missing expiration was challenged: potential compensating check "
-                    f"'{call.func_name}' detected in scope (defined in '{rel_path}')."
+                    f"claiming missing expiration was challenged: {prefix} "
+                    f"potential compensating check '{call.func_name}' detected in scope "
+                    f"(defined in '{rel_path}'). "
+                    "(Note: static detection is not runtime proof of execution)."
                 )
         return None
 
@@ -271,10 +276,12 @@ class CounterexampleChecker:
                 continue
             if call.is_statement_expr:
                 continue
+            prefix = GROUNDING_STATIC_CONTROL_TAG
             return (
                 f"Candidate issue {finding.id}{req_info} on '{finding.file_path}' "
-                f"claiming missing expiration was challenged: potential compensating check "
-                f"'{call.func_name}' detected in scope."
+                f"claiming missing expiration was challenged: {prefix} "
+                f"potential compensating check '{call.func_name}' detected in scope. "
+                "(Note: static detection is not runtime proof of execution)."
             )
         return None
 
@@ -322,10 +329,12 @@ class CounterexampleChecker:
             return scope_note
 
         if self._has_expires_at_check(scope, subject_token, max_line=effective_max_line):
+            prefix = GROUNDING_STATIC_CONTROL_TAG
             return (
                 f"Candidate issue {finding.id}{req_info} on '{finding.file_path}' "
-                "claiming missing expiration was challenged: expiration comparison "
-                "check detected in scope."
+                f"claiming missing expiration was challenged: {prefix} "
+                "expiration comparison check detected in scope. "
+                "(Note: static detection is not runtime proof of execution)."
             )
 
         return None
@@ -354,10 +363,12 @@ class CounterexampleChecker:
         scope = self._find_enclosing_scope(tree, finding.line)
         if self._has_zero_division_guard(scope, finding.line):
             req_info = f" ({', '.join(finding.requirement_ids)})" if finding.requirement_ids else ""
+            prefix = GROUNDING_STATIC_CONTROL_TAG
             return (
                 f"Candidate issue {finding.id}{req_info} on '{finding.file_path}' "
-                "claiming unhandled zero division was challenged: guard check found "
-                "protecting division in scope."
+                f"claiming unhandled zero division was challenged: {prefix} "
+                "guard check found protecting division in scope. "
+                "(Note: static detection is not runtime proof of execution)."
             )
 
         return None
@@ -367,11 +378,26 @@ class CounterexampleChecker:
         findings: list[ReviewFinding],
         context: GitReviewContext,
     ) -> tuple[list[ReviewFinding], list[str]]:
-        """Filter or challenge findings using defensible call-path evidence."""
+        """Filter or challenge findings using defensible call-path evidence.
+
+        Definitive defect claims (issues or blocking findings) are challenged if static
+        compensating controls are verified in context. Uncertain findings (questions,
+        suggestions, thoughts, or notes) are NEVER automatically suppressed.
+        """
         validated: list[ReviewFinding] = []
         dismissal_notes: list[str] = []
 
         for f in findings:
+            # Never suppress uncertain findings or non-blocking suggestions/questions
+            if not f.blocking and f.label in (
+                ConventionalLabel.QUESTION,
+                ConventionalLabel.SUGGESTION,
+                ConventionalLabel.THOUGHT,
+                ConventionalLabel.NOTE,
+            ):
+                validated.append(f)
+                continue
+
             finding_text = f"{f.subject} {f.description}".lower()
 
             note = self._check_expiration_compensation(f, finding_text, context)
