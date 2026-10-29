@@ -16,8 +16,6 @@ from verifycraft.review.providers.base import (
 )
 from verifycraft.review.providers.registry import resolve_provider_adapter
 
-load_dotenv_if_present()
-
 
 def test_deepseek_missing_credentials_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     """Verifies that missing credentials raise ProviderConfigurationError immediately."""
@@ -28,12 +26,12 @@ def test_deepseek_missing_credentials_raises(monkeypatch: pytest.MonkeyPatch) ->
     assert "DEEPSEEK_API_KEY" in str(exc_info.value)
 
 
-@pytest.mark.skipif(
-    not os.environ.get("DEEPSEEK_API_KEY"),
-    reason="Requires DEEPSEEK_API_KEY in environment to execute live DeepSeek smoke test",
-)
 def test_deepseek_live_smoke() -> None:
     """Live smoke test verifying actual DeepSeek API call, JSON generation, and parsing."""
+    load_dotenv_if_present(opt_in=True)
+    if not os.environ.get("DEEPSEEK_API_KEY"):
+        pytest.skip("Requires DEEPSEEK_API_KEY in environment to execute live DeepSeek smoke test")
+
     adapter = resolve_provider_adapter("deepseek", model="deepseek-chat")
     assert adapter is not None
     sample_prompt = (

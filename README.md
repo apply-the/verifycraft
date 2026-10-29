@@ -120,7 +120,7 @@ VerifyCraft is genuinely model-agnostic, supporting major cloud providers (OpenA
 ```bash
 # Review with DeepSeek
 export DEEPSEEK_API_KEY="your-deepseek-api-key"
-verifycraft review . --base main --head HEAD --provider deepseek --model deepseek-flash --format comments
+verifycraft review . --base main --head HEAD --provider deepseek --model deepseek-chat --format comments
 
 # Review with local Ollama (100% offline, zero cloud API keys required)
 verifycraft review . --base main --head HEAD --provider ollama --model llama3.1:latest
@@ -161,7 +161,7 @@ verifycraft review . \
 | `--requirements` | Path to requirement document or text (repeatable) | None |
 | `--candidates` | Path to JSON file containing candidate findings for model-free review | None |
 | `--provider` | Review provider: `deepseek`, `openai`, `anthropic`, `bedrock`, `gemini`, `ollama`, `lmstudio`, `vllm`, `llamacpp`, `openai-compatible`, `deterministic`, `none`. | None |
-| `--model` | Model name override for LLM provider (e.g. `deepseek-flash`, `gpt-4o`) | Provider default |
+| `--model` | Model name override for LLM provider (e.g. `deepseek-chat`, `gpt-4o`) | Provider default |
 | `--base-url` | Custom API base URL for local inference or OpenAI-compatible server | Provider default |
 | `--allow-insecure-http` | Allow plain HTTP for non-loopback endpoints (insecure) | Disabled |
 | `--format` | Output format: `markdown`, `json`, `comments` | `markdown` |

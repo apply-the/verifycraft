@@ -217,7 +217,7 @@ def build_parser() -> argparse.ArgumentParser:
     review_parser.add_argument(
         "--model",
         default=None,
-        help="Model name override (e.g. 'deepseek-flash', 'gpt-4o', 'gemini-2.5-pro').",
+        help="Model name override (e.g. 'deepseek-chat', 'gpt-4o', 'gemini-2.5-pro').",
     )
     review_parser.add_argument(
         "--base-url",

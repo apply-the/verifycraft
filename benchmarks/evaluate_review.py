@@ -1342,7 +1342,7 @@ def _check_credentials_available(provider: str, base_url: str | None = None) -> 
         return bool(
             os.environ.get("AWS_ACCESS_KEY_ID")
             or os.environ.get("AWS_PROFILE")
-            or os.environ.get("AWS_DEFAULT_REGION")
+            or os.environ.get("AWS_SESSION_TOKEN")
         )
     if canonical in ("openai", "openai-compatible"):
         return bool(os.environ.get("OPENAI_API_KEY"))

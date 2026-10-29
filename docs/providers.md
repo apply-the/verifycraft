@@ -103,7 +103,7 @@ export DEEPSEEK_API_KEY="your-deepseek-api-key"
 verifycraft review . \
   --base main --head HEAD \
   --provider deepseek \
-  --model deepseek-flash \
+  --model deepseek-chat \
   --format comments
 ```
 
@@ -223,7 +223,7 @@ req = ReviewRequest(
     base_revision="main",
     head_revision="HEAD",
     provider="deepseek",
-    model="deepseek-flash",
+    model="deepseek-chat",
     policy=ReviewPolicy(timeout_seconds=60.0),
 )
 report = engine.review(req)

@@ -457,7 +457,13 @@ class ReviewEngine:
                 if rep.line is None and f.line is None:
                     lines_compatible = True
                 elif rep.line is not None and f.line is not None:
-                    lines_compatible = abs(rep.line - f.line) <= 30
+                    dist = abs(rep.line - f.line)
+                    if dist <= 10:
+                        lines_compatible = True
+                    elif dist <= 30:
+                        lines_compatible = bool(syms and rep_syms and (syms & rep_syms))
+                    else:
+                        lines_compatible = False
                 else:
                     # One unanchored, one anchored: compatible if exact symbol matches
                     lines_compatible = bool(syms and rep_syms and (syms & rep_syms))
@@ -471,11 +477,7 @@ class ReviewEngine:
                 word_union = words | rep_words
                 jaccard = (len(shared_words) / len(word_union)) if word_union else 0.0
 
-                has_word_match = bool(
-                    (words and words.issubset(rep_words))
-                    or (rep_words and rep_words.issubset(words))
-                )
-                if shared_syms or jaccard >= 0.4 or has_word_match:
+                if shared_syms or jaccard >= 0.5:
                     cluster.append(f)
                     placed = True
                     break
@@ -509,9 +511,10 @@ class ReviewEngine:
             if notes:
                 merged_desc = f"{merged_desc}\n\n" + "\n\n".join(notes)
 
-            # Maximize blocking and severity
-            is_blocking = any(item.blocking for item in cluster)
-            max_sev = max(cluster, key=lambda item: severity_rank.get(item.severity, 1)).severity
+            # Preserve primary's blocking and severity decisions to avoid inflating
+            # blocking status from unverified or subordinate cluster members.
+            is_blocking = primary.blocking
+            sev = primary.severity
             all_req_ids = sorted({req for item in cluster for req in item.requirement_ids})
 
             deduped.append(
@@ -519,7 +522,7 @@ class ReviewEngine:
                     update={
                         "description": merged_desc,
                         "blocking": is_blocking,
-                        "severity": max_sev,
+                        "severity": sev,
                         "requirement_ids": all_req_ids,
                     }
                 )
