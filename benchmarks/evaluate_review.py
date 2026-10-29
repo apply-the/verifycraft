@@ -25,7 +25,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import time
 from dataclasses import asdict, dataclass
 from typing import Any, Literal
@@ -43,11 +42,13 @@ from verifycraft.contracts.review import (
 from verifycraft.review.engine import ReviewEngine
 from verifycraft.review.git import ChangedFile, DiffHunk, GitReviewContext
 from verifycraft.review.providers.base import (
+    ProviderConfigurationError,
     ProviderResponse,
     RawCandidateFinding,
     RawRequirementAssessment,
     ReviewerModelAdapter,
 )
+from verifycraft.review.providers.registry import PROVIDER_CONFIGS, resolve_provider_adapter
 from verifycraft.review.requirements import ParsedRequirement
 
 VARIANT_A_KEY = "variant_a"
@@ -1035,6 +1036,7 @@ def _print_evaluation_banner(
     cases_count: int,
     model_name: str,
     live_active: bool,
+    provider: str = "gemini",
 ) -> None:
     """Print standard benchmark header banner."""
     print("=" * 80)
@@ -1043,9 +1045,12 @@ def _print_evaluation_banner(
         print(" EXECUTION MODE: SIMULATED (Synthetic Hermetic Contract Fixture Validation)")
         print(f" {SIMULATED_DISCLAIMER}")
     else:
-        status_msg = "LIVE GEMINI VALIDATION ACTIVE" if live_active else "LIVE BLOCKED"
+        status_msg = f"LIVE {provider.upper()} VALIDATION ACTIVE" if live_active else "LIVE BLOCKED"
         print(f" EXECUTION MODE: LIVE ({status_msg})")
-    print(f" Evaluation Split: {split.upper()} ({cases_count} cases) | Model: {model_name}")
+    print(
+        f" Evaluation Split: {split.upper()} ({cases_count} cases) | "
+        f"Provider: {provider} | Model: {model_name}"
+    )
     print("=" * 80)
 
 
@@ -1206,6 +1211,8 @@ def assess_release_gate(
     agg_b: AggregateVariantSummary,
     agg_c: AggregateVariantSummary,
     split: str = "all",
+    provider: str = "gemini",
+    missing_credentials_msg: str | None = None,
 ) -> dict[str, Any]:
     """Evaluate defensible multi-stage release decision policy.
 
@@ -1251,10 +1258,10 @@ def assess_release_gate(
         )
     elif not credentials_available:
         status = "BLOCKED"
-        recommendation = "NO-GO (Live Evaluation Blocked — Missing Credentials)"
-        summary_text = (
-            "Live evaluation could not execute because neither GEMINI_API_KEY nor "
-            "GOOGLE_API_KEY was found in the environment."
+        recommendation = f"NO-GO (Live Evaluation Blocked — Missing Credentials for '{provider}')"
+        summary_text = missing_credentials_msg or (
+            "Live evaluation could not execute because required credentials for "
+            f"provider '{provider}' were not found in the environment."
         )
     elif not live_provider_call_completed:
         status = "PROVIDER_CALL_FAILED"
@@ -1318,30 +1325,52 @@ def assess_release_gate(
 def run_evaluation(
     split: Literal["dev", "held_out", "all"] = "all",
     mode: Literal["simulated", "live"] = "simulated",
+    provider: str = "gemini",
+    model: str | None = None,
+    base_url: str | None = None,
+    allow_insecure_http: bool = False,
     verbose: bool = True,
 ) -> dict[str, Any]:
     """Execute the 3-variant review quality evaluation suite across all cases."""
     cases = load_review_eval_dataset(split=split)
-    api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
 
     if mode == "live":
-        if not api_key:
+        try:
+            resolved_adapter = resolve_provider_adapter(
+                provider_name=provider,
+                model=model,
+                base_url=base_url,
+                allow_insecure_http=allow_insecure_http,
+            )
+            if resolved_adapter is None:
+                raise ProviderConfigurationError(
+                    f"Model-free provider '{provider}' cannot be evaluated in live benchmark mode."
+                )
+            adapter: ReviewerModelAdapter = resolved_adapter
+            live_active = True
+        except ProviderConfigurationError as err:
+            cfg = PROVIDER_CONFIGS.get(provider.lower())
+            env_hint = (cfg.api_key_env_var if cfg else None) or f"{provider.upper()}_API_KEY"
+            prov_upper = provider.upper()
             error_banner = "\n".join(
                 [
                     "",
                     "=" * 80,
-                    " VerifyCraft Review Quality Evaluation — Live Release Gate",
-                    " STATUS: BLOCKED (Credentials Unavailable)",
+                    f" VerifyCraft Review Quality Evaluation — Live Release Gate ({prov_upper})",
+                    " STATUS: BLOCKED (Credentials Unavailable or Configuration Error)",
                     "=" * 80,
-                    "ERROR: Live evaluation requested (--mode live), but neither GEMINI_API_KEY",
-                    "nor GOOGLE_API_KEY was found in the execution environment.",
+                    f"ERROR: Live evaluation requested (--mode live) for provider '{provider}',",
+                    f"but configuration failed: {err}",
                     "",
                     "VerifyCraft fails closed in live mode and NEVER silently falls back to",
                     "simulated results when live credentials are requested.",
                     "",
                     "To execute live evaluation locally:",
-                    '  export GEMINI_API_KEY="your-gemini-api-key"',
-                    "  uv run python -m benchmarks.evaluate_review --mode live",
+                    f'  export {env_hint}="your-{provider}-key"',
+                    (
+                        "  uv run python -m benchmarks.evaluate_review "
+                        f"--mode live --provider {provider}"
+                    ),
                     "",
                     "Release Recommendation: NO-GO (Live validation blocked)",
                     "=" * 80,
@@ -1350,12 +1379,7 @@ def run_evaluation(
             )
             if verbose:
                 print(error_banner)
-            raise SystemExit(1)
-
-        from verifycraft.review.providers.gemini import GeminiReviewerAdapter
-
-        adapter: ReviewerModelAdapter = GeminiReviewerAdapter(api_key=api_key)
-        live_active = True
+            raise SystemExit(1) from err
     else:
         adapter = SimulatedGeminiReviewer()
         live_active = False
@@ -1386,6 +1410,7 @@ def run_evaluation(
     summary: dict[str, Any] = {
         "evaluation_version": "2.0.0",
         "execution_mode": mode,
+        "provider": provider,
         "live_gate_status": "COMPLETED" if live_active else "BLOCKED (Missing API Credentials)",
         "model_name": getattr(adapter, "model_name", "simulated"),
         "split": split,
@@ -1426,18 +1451,26 @@ def run_evaluation(
         "release_gate": assess_release_gate(
             mode=mode,
             live_active=live_active,
-            credentials_available=bool(api_key),
+            credentials_available=bool(live_active),
             live_provider_call_completed=live_active,
             agg_b=agg_b,
             agg_c=agg_c,
             split=split,
+            provider=provider,
         ),
         "per_case_metrics": [asdict(r) for r in results],
     }
     summary["release_recommendation"] = summary["release_gate"]["recommendation"]
 
     if verbose:
-        _print_evaluation_banner(mode, split, len(cases), summary["model_name"], live_active)
+        _print_evaluation_banner(
+            mode,
+            split,
+            len(cases),
+            summary["model_name"],
+            live_active,
+            provider=provider,
+        )
         _print_case_metrics_table(results)
         _print_aggregate_metrics(
             agg_a,
@@ -1459,12 +1492,32 @@ def main() -> None:
         "--mode",
         choices=["simulated", "live"],
         default="simulated",
-        help="Benchmark mode: 'simulated' (synthetic fixtures) or 'live' (real Gemini calls).",
+        help="Benchmark mode: 'simulated' (synthetic fixtures) or 'live' (real model calls).",
     )
     parser.add_argument(
         "--live",
         action="store_true",
         help="Convenience alias for --mode live.",
+    )
+    parser.add_argument(
+        "--provider",
+        default="gemini",
+        help="Reviewer model provider: 'gemini', 'deepseek', 'openai', 'anthropic', 'ollama', etc.",
+    )
+    parser.add_argument(
+        "--model",
+        default=None,
+        help="Model identifier override (e.g. 'deepseek-flash', 'gpt-4o', 'gemini-2.5-flash').",
+    )
+    parser.add_argument(
+        "--base-url",
+        default=None,
+        help="Base URL for custom OpenAI-compatible or local inference server.",
+    )
+    parser.add_argument(
+        "--allow-insecure-http",
+        action="store_true",
+        help="Explicitly allow plain HTTP for non-loopback endpoints (insecure).",
     )
     parser.add_argument(
         "--split",
@@ -1482,7 +1535,15 @@ def main() -> None:
     mode_val: Literal["simulated", "live"] = (
         "live" if args.live or args.mode == "live" else "simulated"
     )
-    report = run_evaluation(split=args.split, mode=mode_val, verbose=not args.json)
+    report = run_evaluation(
+        split=args.split,
+        mode=mode_val,
+        provider=args.provider,
+        model=args.model,
+        base_url=args.base_url,
+        allow_insecure_http=args.allow_insecure_http,
+        verbose=not args.json,
+    )
 
     if args.json:
         print(json.dumps(report, indent=2))

@@ -22,14 +22,12 @@ from verifycraft.contracts.review import (
 from verifycraft.review.counterexamples import CounterexampleChecker
 from verifycraft.review.git import ChangedFile, GitContextCollector, GitReviewContext
 from verifycraft.review.providers.base import (
-    ProviderConfigurationError,
     ProviderResponse,
     RawCandidateFinding,
     RawRequirementAssessment,
     ReviewerModelAdapter,
 )
-from verifycraft.review.providers.deterministic import DeterministicReviewerAdapter
-from verifycraft.review.providers.gemini import GeminiReviewerAdapter
+from verifycraft.review.providers.registry import resolve_provider_adapter
 from verifycraft.review.requirements import ParsedRequirement, RequirementsParser
 
 
@@ -134,22 +132,22 @@ class ReviewEngine:
         self,
         provider_name: str,
         model: str | None = None,
+        base_url: str | None = None,
+        allow_insecure_http: bool = False,
+        timeout_seconds: float = 60.0,
     ) -> ReviewerModelAdapter | None:
         name = provider_name.lower().strip()
         if name in ("none", "model-free", "agent"):
             return None
-
         if self._injected_adapter is not None:
             return self._injected_adapter
-        elif name in ("deterministic", "fake"):
-            return DeterministicReviewerAdapter()
-        elif name == "gemini":
-            return GeminiReviewerAdapter(model_name=model)
-        else:
-            raise ProviderConfigurationError(
-                f"Unsupported provider: '{provider_name}'. "
-                "Supported: 'gemini', 'deterministic', 'none'."
-            )
+        return resolve_provider_adapter(
+            provider_name=provider_name,
+            model=model,
+            base_url=base_url,
+            allow_insecure_http=allow_insecure_http,
+            timeout_seconds=timeout_seconds,
+        )
 
     def review(
         self,
@@ -160,7 +158,13 @@ class ReviewEngine:
         start_time = time.monotonic()
 
         # 1. Validate and resolve reviewer model adapter early
-        adapter = self._get_adapter(request.provider, model=request.model)
+        adapter = self._get_adapter(
+            request.provider,
+            model=request.model,
+            base_url=request.base_url,
+            allow_insecure_http=request.allow_insecure_http,
+            timeout_seconds=request.policy.timeout_seconds,
+        )
 
         # 2. Collect Git context
         collector = GitContextCollector(request.repo_path)
@@ -241,11 +245,13 @@ class ReviewEngine:
             output_tokens=getattr(provider_resp, "output_tokens", None),
         )
 
-        resolved_model_name = getattr(
-            adapter,
-            "model_name",
-            request.model or ("model-free" if adapter is None else "deterministic"),
-        )
+        model_name_attr = getattr(adapter, "model_name", None)
+        if isinstance(model_name_attr, str):
+            resolved_model_name = model_name_attr
+        else:
+            resolved_model_name = request.model or (
+                "model-free" if adapter is None else "deterministic"
+            )
         model_info = ModelInfo(
             provider=request.provider,
             model_name=resolved_model_name,
