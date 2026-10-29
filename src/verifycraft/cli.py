@@ -338,27 +338,28 @@ def _load_candidates_from_file(candidates_path_arg: Path) -> list[ReviewFinding]
         sys.exit(1)
 
 
+def _resolve_review_provider(provider_arg: str | None, has_candidates: bool) -> str:
+    if provider_arg:
+        return provider_arg
+    if has_candidates:
+        return "none"
+    print(
+        "Error: Explicit provider selection is required (e.g. '--provider gemini', "
+        "'--provider deterministic') or provide candidate findings via "
+        "'--candidates <file>'.",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+
+
 def _execute_review(args: argparse.Namespace) -> None:
     candidates: list[ReviewFinding] = []
     if args.candidates:
         candidates = _load_candidates_from_file(args.candidates)
 
-    provider = args.provider
-    if not provider:
-        if candidates:
-            provider = "none"
-        else:
-            print(
-                "Error: Explicit provider selection is required (e.g. '--provider gemini', "
-                "'--provider deterministic') or provide candidate findings via "
-                "'--candidates <file>'.",
-                file=sys.stderr,
-            )
-            sys.exit(1)
+    provider = _resolve_review_provider(args.provider, bool(candidates))
 
-    if provider.lower() in ("none", "model-free", "agent"):
-        pass
-    else:
+    if provider.lower() not in ("none", "model-free", "agent"):
         print(
             format_provider_disclosure(provider, model=args.model, base_url=args.base_url),
             file=sys.stderr,

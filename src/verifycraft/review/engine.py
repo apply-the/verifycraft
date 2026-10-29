@@ -146,7 +146,6 @@ class ReviewEngine:
             model=model,
             base_url=base_url,
             allow_insecure_http=allow_insecure_http,
-            timeout_seconds=timeout_seconds,
         )
 
     def review(

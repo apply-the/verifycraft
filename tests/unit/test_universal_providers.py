@@ -645,3 +645,269 @@ def test_cli_allows_insecure_remote_http_with_flag(
         assert exc.value.code == 0
         _, err = capsys.readouterr()
         assert "Remote provider 'openai-compatible' selected" in err
+
+
+# ---------------------------------------------------------------------------
+# 11. Edge Cases & Branch Coverage Boost
+# ---------------------------------------------------------------------------
+
+
+def test_is_loopback_url_edge_cases() -> None:
+    assert is_loopback_url("http://127.0.0.2:8000") is True
+    assert is_loopback_url("http://0.0.0.0:8000") is True
+    assert is_loopback_url("http://192.168.1.1:8000") is False
+    assert is_loopback_url("http://[:::1]:8000") is False
+
+
+def test_parse_json_response_token_calculation_and_fences() -> None:
+    # Test token calculation when tokens_used is None
+    res = ProviderResponseParser.parse_json_response(
+        SAMPLE_STRUCTURED_JSON,
+        tokens_used=None,
+        prompt_tokens=15,
+        output_tokens=25,
+    )
+    assert res.tokens_used == 40
+
+    # Test fence stripping with single fence or trailing newline
+    fence_json = "```json\n" + SAMPLE_STRUCTURED_JSON + "\n```"
+    res2 = ProviderResponseParser.parse_json_response(fence_json)
+    assert res2.summary == "Detected potential timing leak."
+
+    # Test invalid json non-dict filtering
+    weird_json = (
+        '{"summary": "ok", "candidate_findings": ["not-a-dict"], "requirement_assessments": [42]}'
+    )
+    res3 = ProviderResponseParser.parse_json_response(weird_json)
+    assert res3.summary == "ok"
+    assert len(res3.candidate_findings) == 0
+    assert len(res3.requirement_assessments) == 0
+
+
+def test_openai_compatible_missing_model_and_supports_json_mode_false() -> None:
+    with pytest.raises(ProviderConfigurationError, match="Model identifier is required"):
+        OpenAICompatibleReviewerAdapter(model_name=None, config=None, api_key="dummy")
+
+    mock_client = MagicMock()
+    mock_resp = MagicMock()
+    mock_choice = MagicMock()
+    mock_choice.message.content = SAMPLE_STRUCTURED_JSON
+    mock_resp.choices = [mock_choice]
+    mock_resp.usage = None
+    mock_client.chat.completions.create.return_value = mock_resp
+
+    adapter = OpenAICompatibleReviewerAdapter(
+        config=PROVIDER_CONFIGS["deepseek"],
+        api_key="test-key",
+        model_name="deepseek-flash",
+        supports_json_mode=False,
+    )
+    adapter._client = mock_client
+    adapter.review("Prompt")
+    call_kwargs = mock_client.chat.completions.create.call_args.kwargs
+    assert "response_format" not in call_kwargs
+
+
+def test_openai_compatible_empty_choices() -> None:
+    mock_client = MagicMock()
+    mock_resp = MagicMock()
+    mock_resp.choices = []
+    mock_resp.usage = None
+    mock_client.chat.completions.create.return_value = mock_resp
+
+    adapter = OpenAICompatibleReviewerAdapter(
+        config=PROVIDER_CONFIGS["deepseek"],
+        api_key="test-key",
+        model_name="deepseek-flash",
+    )
+    adapter._client = mock_client
+    with pytest.raises(ProviderCallError, match="Model returned invalid JSON"):
+        adapter.review("Prompt")
+
+
+def test_openai_compatible_fallback_double_failure() -> None:
+    mock_client = MagicMock()
+    # First call with response_format fails, second fallback call without response_format ALSO fails
+    mock_client.chat.completions.create.side_effect = [
+        Exception("response_format not supported"),
+        RuntimeError("Fallback network failure"),
+    ]
+
+    adapter = OpenAICompatibleReviewerAdapter(
+        config=PROVIDER_CONFIGS["deepseek"],
+        api_key="test-key",
+        model_name="deepseek-flash",
+    )
+    adapter._client = mock_client
+    with pytest.raises(ProviderCallError, match="Fallback network failure"):
+        adapter.review("Prompt")
+
+
+def test_openai_compatible_client_initialization() -> None:
+    adapter = OpenAICompatibleReviewerAdapter(
+        config=PROVIDER_CONFIGS["deepseek"],
+        api_key="test-key",
+        model_name="deepseek-flash",
+    )
+    with patch("openai.OpenAI") as mock_openai_cls:
+        mock_instance = MagicMock()
+        mock_openai_cls.return_value = mock_instance
+        client = adapter._get_client()
+        assert client == mock_instance
+
+    adapter_err = OpenAICompatibleReviewerAdapter(
+        config=PROVIDER_CONFIGS["deepseek"],
+        api_key="test-key",
+        model_name="deepseek-flash",
+    )
+    with (
+        patch("openai.OpenAI", side_effect=ValueError("Bad init")),
+        pytest.raises(ProviderConfigurationError, match="Failed to initialize OpenAI client"),
+    ):
+        adapter_err._get_client()
+
+
+def test_anthropic_non_text_blocks_and_token_accounting() -> None:
+    mock_client = MagicMock()
+    mock_resp = MagicMock()
+    tool_block = MagicMock()
+    tool_block.type = "tool_use"
+    text_block = MagicMock()
+    text_block.type = "text"
+    text_block.text = SAMPLE_STRUCTURED_JSON
+    mock_resp.content = [tool_block, text_block]
+    mock_resp.usage = None
+    mock_client.messages.create.return_value = mock_resp
+
+    adapter = AnthropicReviewerAdapter(api_key="test-key", model_name="claude-3-5-sonnet")
+    adapter._client = mock_client
+    res = adapter.review("Prompt")
+    assert res.summary == "Detected potential timing leak."
+    assert res.tokens_used is None
+
+
+def test_anthropic_client_initialization_failure() -> None:
+    adapter = AnthropicReviewerAdapter(api_key="test-key", model_name="claude-3-5-sonnet")
+    with (
+        patch("anthropic.Anthropic", side_effect=Exception("Anthropic init error")),
+        pytest.raises(ProviderConfigurationError, match="Failed to initialize Anthropic client"),
+    ):
+        adapter._get_client()
+
+
+def test_bedrock_edge_cases_tokens_and_blocks() -> None:
+    mock_client = MagicMock()
+    mock_client.converse.return_value = {
+        "output": {
+            "message": {
+                "content": [
+                    {"image": {"source": "data"}},  # non-text block
+                    {"text": SAMPLE_STRUCTURED_JSON},
+                ]
+            }
+        },
+        "usage": {
+            "inputTokens": 30,
+            "outputTokens": 20,
+            # totalTokens omitted to test calculation
+        },
+    }
+
+    adapter = BedrockReviewerAdapter(model_name="anthropic.claude-v2")
+    adapter._client = mock_client
+    res = adapter.review("Prompt")
+    assert res.summary == "Detected potential timing leak."
+    assert res.tokens_used == 50
+    assert res.prompt_tokens == 30
+    assert res.output_tokens == 20
+
+
+def test_bedrock_client_initialization_failure() -> None:
+    adapter = BedrockReviewerAdapter(model_name="anthropic.claude-v2")
+    with (
+        patch("boto3.Session", side_effect=Exception("Boto3 session error")),
+        pytest.raises(ProviderConfigurationError, match="Failed to initialize AWS Bedrock client"),
+    ):
+        adapter._get_client()
+
+
+def test_registry_bedrock_and_unknown_type() -> None:
+    adapter = resolve_provider_adapter("bedrock")
+    assert isinstance(adapter, BedrockReviewerAdapter)
+
+    from verifycraft.review.providers.base import ProviderConfig
+
+    dummy_cfg = ProviderConfig(
+        provider_name="weird",
+        provider_type="unsupported_type",
+        model="m",
+        api_key_env_var=None,
+    )
+    with (
+        patch.dict(PROVIDER_CONFIGS, {"weird": dummy_cfg}),
+        pytest.raises(ProviderConfigurationError, match="Unknown provider type"),
+    ):
+        resolve_provider_adapter("weird")
+
+
+def test_cli_resolve_review_provider_helper(capsys: pytest.CaptureFixture[str]) -> None:
+    from verifycraft.cli import _resolve_review_provider
+
+    assert _resolve_review_provider("deepseek", False) == "deepseek"
+    assert _resolve_review_provider(None, True) == "none"
+
+    with pytest.raises(SystemExit) as exc:
+        _resolve_review_provider(None, False)
+    assert exc.value.code == 1
+    _, err = capsys.readouterr()
+    assert "Explicit provider selection is required" in err
+
+
+def test_openai_compatible_custom_without_config() -> None:
+    adapter = OpenAICompatibleReviewerAdapter(
+        model_name="custom-model",
+        base_url="https://custom.endpoint.com/v1",
+        api_key="custom-key",
+    )
+    assert adapter.supports_json_mode is True
+    assert adapter.is_local is False
+
+
+def test_anthropic_client_initialization_success_and_partial_usage() -> None:
+    adapter = AnthropicReviewerAdapter(api_key="test-key", model_name="claude-3-5-sonnet")
+    with patch("anthropic.Anthropic") as mock_cls:
+        mock_instance = MagicMock()
+        mock_cls.return_value = mock_instance
+        client = adapter._get_client()
+        assert client == mock_instance
+
+    # Test partial usage where output_tokens is None
+    mock_resp = MagicMock()
+    mock_resp.content = [MagicMock(type="text", text=SAMPLE_STRUCTURED_JSON)]
+    mock_resp.usage = MagicMock(input_tokens=100, output_tokens=None)
+    mock_client = MagicMock()
+    mock_client.messages.create.return_value = mock_resp
+    adapter._client = mock_client
+    res = adapter.review("Prompt")
+    assert res.tokens_used is None
+    assert res.prompt_tokens == 100
+
+
+def test_bedrock_client_initialization_success() -> None:
+    with patch("boto3.Session") as mock_sess_cls:
+        mock_sess = MagicMock()
+        mock_sess_cls.return_value = mock_sess
+        mock_sess.client.return_value = MagicMock()
+        adapter = BedrockReviewerAdapter(model_name="anthropic.claude-v2")
+        assert adapter._get_client() is not None
+
+
+def test_registry_gemini_resolution() -> None:
+    adapter = resolve_provider_adapter("gemini", api_key="dummy-gemini-key")
+    assert adapter is not None
+
+
+def test_strip_markdown_fences_without_closing_fence() -> None:
+    fence_no_end = "```json\n" + SAMPLE_STRUCTURED_JSON
+    res = ProviderResponseParser.parse_json_response(fence_no_end)
+    assert res.summary == "Detected potential timing leak."

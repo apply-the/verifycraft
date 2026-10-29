@@ -274,7 +274,6 @@ def resolve_provider_adapter(
     base_url: str | None = None,
     api_key: str | None = None,
     allow_insecure_http: bool = False,
-    timeout_seconds: float = 60.0,
 ) -> ReviewerModelAdapter | None:
     """Instantiate and return a configured ReviewerModelAdapter."""
     canonical = normalize_provider_name(provider_name)

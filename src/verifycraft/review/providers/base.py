@@ -6,10 +6,12 @@ import ipaddress
 import json
 import re
 from dataclasses import dataclass, field
-from typing import Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 from urllib.parse import urlparse
 
 from pydantic import BaseModel, Field
+
+REDACTED_PLACEHOLDER: str = "[REDACTED]"
 
 
 class ProviderError(Exception):
@@ -199,13 +201,13 @@ class ProviderResponseParser:
         """Sanitize API keys and secret patterns from strings and exceptions."""
         sanitized = text
         if secret and len(secret) >= 6:
-            sanitized = sanitized.replace(secret, "[REDACTED]")
-        sanitized = re.sub(r"AIza[0-9A-Za-z\-_]{35}", "[REDACTED]", sanitized)
-        sanitized = re.sub(r"sk-[a-zA-Z0-9_\-]{20,}", "[REDACTED]", sanitized)
-        sanitized = re.sub(r"AKIA[0-9A-Z]{16}", "[REDACTED]", sanitized)
+            sanitized = sanitized.replace(secret, REDACTED_PLACEHOLDER)
+        sanitized = re.sub(r"AIza[0-9A-Za-z\-_]{35}", REDACTED_PLACEHOLDER, sanitized)
+        sanitized = re.sub(r"sk-[a-zA-Z0-9_\-]{20,}", REDACTED_PLACEHOLDER, sanitized)
+        sanitized = re.sub(r"AKIA[0-9A-Z]{16}", REDACTED_PLACEHOLDER, sanitized)
         sanitized = re.sub(
             r"(?i)(key|token|secret|password)[:=]\s*['\"]?[\w\-]{16,}['\"]?",
-            r"\1=[REDACTED]",
+            rf"\1={REDACTED_PLACEHOLDER}",
             sanitized,
         )
         return sanitized
@@ -218,14 +220,7 @@ class ProviderResponseParser:
         output_tokens: int | None = None,
     ) -> ProviderResponse:
         """Parse, strip markdown fences, and validate structured JSON response."""
-        clean = text.strip()
-        if clean.startswith("```"):
-            lines = clean.splitlines()
-            if lines and lines[0].startswith("```"):
-                lines = lines[1:]
-            if lines and lines[-1].strip() == "```":
-                lines = lines[:-1]
-            clean = "\n".join(lines).strip()
+        clean = _strip_markdown_fences(text)
 
         try:
             data = json.loads(clean)
@@ -236,36 +231,8 @@ class ProviderResponseParser:
 
         try:
             summary = str(data.get("summary", "Review completed."))
-            raw_findings: list[RawCandidateFinding] = []
-            for item in data.get("candidate_findings", []):
-                raw_findings.append(
-                    RawCandidateFinding(
-                        file_path=str(item.get("file_path", "")),
-                        line=int(item["line"]) if item.get("line") is not None else None,
-                        end_line=(
-                            int(item["end_line"]) if item.get("end_line") is not None else None
-                        ),
-                        label=str(item.get("label", "issue")),
-                        decorations=list(item.get("decorations", [])),
-                        subject=str(item.get("subject", "Review Finding")),
-                        description=str(item.get("description", "")),
-                        severity=str(item.get("severity", "medium")),
-                        blocking=bool(item.get("blocking", False)),
-                        requirement_ids=[str(r) for r in item.get("requirement_ids", [])],
-                        suggested_action=item.get("suggested_action"),
-                    )
-                )
-
-            raw_assessments: list[RawRequirementAssessment] = []
-            for item in data.get("requirement_assessments", []):
-                raw_assessments.append(
-                    RawRequirementAssessment(
-                        requirement_id=str(item.get("requirement_id", "")),
-                        status=str(item.get("status", "not_assessed")),
-                        explanation=str(item.get("explanation", "")),
-                        related_locations=[str(loc) for loc in item.get("related_locations", [])],
-                    )
-                )
+            raw_findings = _parse_raw_findings(data.get("candidate_findings", []))
+            raw_assessments = _parse_raw_assessments(data.get("requirement_assessments", []))
 
             if tokens_used is None and prompt_tokens is not None and output_tokens is not None:
                 tokens_used = prompt_tokens + output_tokens
@@ -280,3 +247,53 @@ class ProviderResponseParser:
             )
         except Exception as e:
             raise ProviderCallError(f"Failed to validate model response structure: {e}") from e
+
+
+def _strip_markdown_fences(text: str) -> str:
+    clean = text.strip()
+    if clean.startswith("```"):
+        lines = clean.splitlines()
+        lines = lines[1:]
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]
+        clean = "\n".join(lines).strip()
+    return clean
+
+
+def _parse_raw_findings(items: list[Any]) -> list[RawCandidateFinding]:
+    findings: list[RawCandidateFinding] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        findings.append(
+            RawCandidateFinding(
+                file_path=str(item.get("file_path", "")),
+                line=int(item["line"]) if item.get("line") is not None else None,
+                end_line=int(item["end_line"]) if item.get("end_line") is not None else None,
+                label=str(item.get("label", "issue")),
+                decorations=list(item.get("decorations", [])),
+                subject=str(item.get("subject", "Review Finding")),
+                description=str(item.get("description", "")),
+                severity=str(item.get("severity", "medium")),
+                blocking=bool(item.get("blocking", False)),
+                requirement_ids=[str(r) for r in item.get("requirement_ids", [])],
+                suggested_action=item.get("suggested_action"),
+            )
+        )
+    return findings
+
+
+def _parse_raw_assessments(items: list[Any]) -> list[RawRequirementAssessment]:
+    assessments: list[RawRequirementAssessment] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        assessments.append(
+            RawRequirementAssessment(
+                requirement_id=str(item.get("requirement_id", "")),
+                status=str(item.get("status", "not_assessed")),
+                explanation=str(item.get("explanation", "")),
+                related_locations=[str(loc) for loc in item.get("related_locations", [])],
+            )
+        )
+    return assessments

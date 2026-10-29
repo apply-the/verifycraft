@@ -23,6 +23,58 @@ from verifycraft.review.providers.base import (
 )
 
 
+def _resolve_endpoint(
+    config: ProviderConfig | None,
+    base_url: str | None,
+    allow_insecure_http: bool,
+) -> tuple[str | None, bool]:
+    resolved_base_url = base_url or (config.base_url if config else None)
+    if resolved_base_url:
+        validate_endpoint_url(resolved_base_url, allow_insecure_http=allow_insecure_http)
+    is_local_target = (config.is_local if config else False) or (
+        bool(resolved_base_url and is_loopback_url(resolved_base_url))
+    )
+    return resolved_base_url, is_local_target
+
+
+def _resolve_model(
+    config: ProviderConfig | None,
+    model_name: str | None,
+    provider_name: str,
+) -> str:
+    resolved_model = model_name or (config.model if config else None)
+    if not resolved_model:
+        raise ProviderConfigurationError(
+            f"Model identifier is required for provider '{provider_name}'. "
+            "Specify --model <model-id> or set in configuration."
+        )
+    return resolved_model
+
+
+def _resolve_api_key(
+    config: ProviderConfig | None,
+    api_key: str | None,
+    is_local_target: bool,
+    provider_name: str,
+) -> str:
+    resolved_key = api_key
+    if not resolved_key and config and config.api_key_env_var:
+        resolved_key = os.environ.get(config.api_key_env_var)
+    if not resolved_key:
+        resolved_key = os.environ.get("OPENAI_API_KEY")
+
+    if resolved_key:
+        return resolved_key
+
+    if is_local_target:
+        return (config.default_api_key if config else None) or "local"
+
+    env_hint = config.api_key_env_var if config else "OPENAI_API_KEY"
+    raise ProviderConfigurationError(
+        f"Provider '{provider_name}' requires environment variable '{env_hint}'."
+    )
+
+
 class OpenAICompatibleReviewerAdapter(ReviewerModelAdapter):
     """Reviewer adapter for any OpenAI-compatible API endpoint."""
 
@@ -38,50 +90,17 @@ class OpenAICompatibleReviewerAdapter(ReviewerModelAdapter):
     ):
         self.config = config
         self.provider_name = config.provider_name if config else "openai-compatible"
+        self.base_url, self.is_local = _resolve_endpoint(config, base_url, allow_insecure_http)
+        self.model_name = _resolve_model(config, model_name, self.provider_name)
+        self.api_key = _resolve_api_key(config, api_key, self.is_local, self.provider_name)
 
-        resolved_base_url = base_url or (config.base_url if config else None)
-        if resolved_base_url:
-            validate_endpoint_url(resolved_base_url, allow_insecure_http=allow_insecure_http)
-        self.base_url = resolved_base_url
+        if supports_json_mode is not None:
+            self.supports_json_mode = supports_json_mode
+        elif config is not None:
+            self.supports_json_mode = config.supports_json_mode
+        else:
+            self.supports_json_mode = True
 
-        resolved_model = model_name or (config.model if config else None)
-        if not resolved_model:
-            raise ProviderConfigurationError(
-                f"Model identifier is required for provider '{self.provider_name}'. "
-                "Specify --model <model-id> or set in configuration."
-            )
-        self.model_name = resolved_model
-
-        # Credentials resolution
-        is_local_target = (config.is_local if config else False) or (
-            bool(resolved_base_url and is_loopback_url(resolved_base_url))
-        )
-
-        resolved_key = api_key
-        if not resolved_key and config and config.api_key_env_var:
-            resolved_key = os.environ.get(config.api_key_env_var)
-        if not resolved_key:
-            # Fallback for generic OPENAI_API_KEY if applicable
-            resolved_key = os.environ.get("OPENAI_API_KEY")
-
-        if not resolved_key:
-            if is_local_target:
-                # Local endpoints do not require cloud credentials;
-                # the OpenAI SDK client requires a non-empty string key.
-                resolved_key = (config.default_api_key if config else None) or "local"
-            else:
-                env_hint = config.api_key_env_var if config else "OPENAI_API_KEY"
-                raise ProviderConfigurationError(
-                    f"Provider '{self.provider_name}' requires environment variable '{env_hint}'."
-                )
-
-        self.api_key: str = resolved_key
-        self.is_local: bool = is_local_target
-        self.supports_json_mode: bool = (
-            supports_json_mode
-            if supports_json_mode is not None
-            else (config.supports_json_mode if config else True)
-        )
         self.extra_headers: dict[str, str] = extra_headers or (
             dict(config.extra_headers) if config else {}
         )
