@@ -11,6 +11,7 @@ from verifycraft.review.providers.base import (
     ProviderResponse,
     ProviderResponseParser,
     ReviewerModelAdapter,
+    validate_endpoint_url,
 )
 
 DEFAULT_ANTHROPIC_MODEL = "claude-3-5-sonnet-20241022"
@@ -24,6 +25,7 @@ class AnthropicReviewerAdapter(ReviewerModelAdapter):
         api_key: str | None = None,
         model_name: str | None = None,
         base_url: str | None = None,
+        allow_insecure_http: bool = False,
     ):
         resolved_key = api_key or os.environ.get("ANTHROPIC_API_KEY")
         if not resolved_key:
@@ -35,6 +37,9 @@ class AnthropicReviewerAdapter(ReviewerModelAdapter):
             model_name or os.environ.get("VERIFYCRAFT_ANTHROPIC_MODEL") or DEFAULT_ANTHROPIC_MODEL
         )
         self.base_url = base_url
+        self.allow_insecure_http = allow_insecure_http
+        if self.base_url:
+            validate_endpoint_url(self.base_url, allow_insecure_http=self.allow_insecure_http)
         self._client: Any = None
 
     def _sanitize(self, text: str) -> str:

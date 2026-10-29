@@ -8,6 +8,7 @@ Together, Fireworks, DeepInfra, OpenRouter) and local inference servers
 
 from __future__ import annotations
 
+import json
 import os
 from typing import Any, NoReturn
 
@@ -168,9 +169,22 @@ class OpenAICompatibleReviewerAdapter(ReviewerModelAdapter):
         if response.choices:
             choice = response.choices[0]
             message = choice.message
-            raw_text = message.content or ""
-            if not raw_text.strip() and hasattr(message, "reasoning_content"):
-                raw_text = getattr(message, "reasoning_content", "") or ""
+            raw_text = (message.content or "").strip()
+            if not raw_text and hasattr(message, "reasoning_content"):
+                reasoning = (getattr(message, "reasoning_content", "") or "").strip()
+                if "{" in reasoning and "}" in reasoning:
+                    try:
+                        clean_reasoning = ProviderResponseParser.strip_markdown_fences(reasoning)
+                        json.loads(clean_reasoning)
+                        raw_text = reasoning
+                    except Exception:
+                        raw_text = ""
+
+        if not raw_text:
+            raise ProviderCallError(
+                f"{self.provider_name} returned an empty response. "
+                "Ensure the model produces non-empty output and complies with the requested schema."
+            )
 
         tokens_used = None
         prompt_tokens = None
@@ -196,11 +210,9 @@ class OpenAICompatibleReviewerAdapter(ReviewerModelAdapter):
         try:
             return client.chat.completions.create(**kwargs)
         except Exception as e:
-            err_msg = str(e).lower()
-            # If endpoint does not support response_format, fallback to prompt-guided JSON
-            if "response_format" in kwargs and (
-                "response_format" in err_msg or "json_object" in err_msg
-            ):
+            # If endpoint specifically rejects response_format as unsupported parameter,
+            # fallback to prompt-guided JSON schema mode once.
+            if "response_format" in kwargs and self._is_unsupported_response_format_error(e):
                 fallback_kwargs = dict(kwargs)
                 del fallback_kwargs["response_format"]
                 try:
@@ -208,6 +220,23 @@ class OpenAICompatibleReviewerAdapter(ReviewerModelAdapter):
                 except Exception as inner_e:
                     self._handle_api_error(inner_e, timeout_seconds)
             self._handle_api_error(e, timeout_seconds)
+
+    @staticmethod
+    def _is_unsupported_response_format_error(exc: Exception) -> bool:
+        status_code = getattr(exc, "status_code", None)
+        if status_code is not None and status_code not in (400, 422):
+            return False
+        err_msg = str(exc).lower()
+        unsupported_signals = (
+            "unsupported parameter: response_format",
+            "unknown parameter: response_format",
+            "unrecognized request argument: response_format",
+            "response_format is not supported",
+            "response_format not supported",
+            "response_format' is not supported",
+            "extra fields not permitted",
+        )
+        return any(sig in err_msg for sig in unsupported_signals)
 
     def _handle_api_error(self, exc: Exception, timeout_seconds: float) -> NoReturn:
         clean_err = self._sanitize(str(exc))

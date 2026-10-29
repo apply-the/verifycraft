@@ -49,6 +49,11 @@ def test_deepseek_live_smoke() -> None:
         "```\n"
     )
     response = adapter.review(sample_prompt, timeout_seconds=30.0)
-    assert response.summary
+    assert response.summary and isinstance(response.summary, str)
     assert isinstance(response.candidate_findings, list)
     assert isinstance(response.requirement_assessments, list)
+    for finding in response.candidate_findings:
+        assert finding.file_path and isinstance(finding.file_path, str)
+        assert finding.subject and isinstance(finding.subject, str)
+        if finding.line is not None:
+            assert isinstance(finding.line, int) and finding.line >= 1

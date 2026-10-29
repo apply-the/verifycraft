@@ -88,7 +88,7 @@ class ReviewerModelAdapter(Protocol):
         ...
 
 
-LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1", "0.0.0.0"})
+LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
 
 
 def is_loopback_url(url: str) -> bool:
@@ -100,7 +100,7 @@ def is_loopback_url(url: str) -> bool:
             return True
         try:
             ip = ipaddress.ip_address(hostname)
-            return ip.is_loopback or ip.is_unspecified
+            return ip.is_loopback
         except ValueError:
             return False
     except Exception:
@@ -127,11 +127,22 @@ def validate_endpoint_url(url: str, allow_insecure_http: bool = False) -> None:
     )
 
 
-def load_dotenv_if_present(env_path: Path | str | None = None) -> None:
-    """Load environment variables from a .env file if present without overriding existing vars."""
+def load_dotenv_if_present(
+    env_path: Path | str | None = None,
+    opt_in: bool = True,
+) -> bool:
+    """Load environment variables from a .env file if present and opt-in is granted.
+
+    Returns True if variables were loaded, False otherwise.
+    """
+    if not opt_in:
+        return False
+
     target = Path(env_path) if env_path is not None else Path(".env")
     if not target.is_file():
-        return
+        return False
+
+    loaded_any = False
     try:
         content = target.read_text(encoding="utf-8")
         for line in content.splitlines():
@@ -143,8 +154,10 @@ def load_dotenv_if_present(env_path: Path | str | None = None) -> None:
             clean_val = val.strip().strip("'\"")
             if clean_key and clean_key not in os.environ:
                 os.environ[clean_key] = clean_val
-    except Exception:
-        pass
+                loaded_any = True
+    except OSError:
+        return False
+    return loaded_any
 
 
 @dataclass(frozen=True)
@@ -219,6 +232,11 @@ class ProviderResponseParser:
         return prompt + cls.SCHEMA_INSTRUCTIONS
 
     @staticmethod
+    def strip_markdown_fences(text: str) -> str:
+        """Strip markdown fences (```json ... ``` or ``` ...) from text."""
+        return _strip_markdown_fences(text)
+
+    @staticmethod
     def sanitize_secrets(text: str, secret: str | None = None) -> str:
         """Sanitize API keys and secret patterns from strings and exceptions."""
         sanitized = text
@@ -227,6 +245,11 @@ class ProviderResponseParser:
         sanitized = re.sub(r"AIza[0-9A-Za-z\-_]{35}", REDACTED_PLACEHOLDER, sanitized)
         sanitized = re.sub(r"sk-[a-zA-Z0-9_\-]{20,}", REDACTED_PLACEHOLDER, sanitized)
         sanitized = re.sub(r"AKIA[0-9A-Z]{16}", REDACTED_PLACEHOLDER, sanitized)
+        sanitized = re.sub(
+            r"Bearer\s+[A-Za-z0-9_\-\.]{16,}",
+            f"Bearer {REDACTED_PLACEHOLDER}",
+            sanitized,
+        )
         sanitized = re.sub(
             r"(?i)(key|token|secret|password)[:=]\s*['\"]?[\w\-]{16,}['\"]?",
             rf"\1={REDACTED_PLACEHOLDER}",
@@ -243,6 +266,8 @@ class ProviderResponseParser:
     ) -> ProviderResponse:
         """Parse, strip markdown fences, and validate structured JSON response."""
         clean = _strip_markdown_fences(text)
+        if not clean:
+            raise ProviderCallError("Model returned an empty response.")
 
         try:
             data = json.loads(clean)
@@ -268,6 +293,8 @@ class ProviderResponseParser:
                 output_tokens=output_tokens,
             )
         except Exception as e:
+            if isinstance(e, ProviderCallError):
+                raise
             raise ProviderCallError(f"Failed to validate model response structure: {e}") from e
 
 
@@ -287,11 +314,28 @@ def _parse_raw_findings(items: list[Any]) -> list[RawCandidateFinding]:
     for item in items:
         if not isinstance(item, dict):
             continue
+        file_path = str(item.get("file_path", "")).strip()
+
+        raw_line = item.get("line")
+        parsed_line: int | None = int(raw_line) if raw_line is not None else None
+        if parsed_line is not None and parsed_line <= 0:
+            parsed_line = None
+
+        raw_end_line = item.get("end_line")
+        parsed_end_line: int | None = int(raw_end_line) if raw_end_line is not None else None
+        has_invalid_range = (
+            parsed_end_line is not None
+            and parsed_line is not None
+            and parsed_end_line < parsed_line
+        )
+        if has_invalid_range:
+            parsed_end_line = parsed_line
+
         findings.append(
             RawCandidateFinding(
-                file_path=str(item.get("file_path", "")),
-                line=int(item["line"]) if item.get("line") is not None else None,
-                end_line=int(item["end_line"]) if item.get("end_line") is not None else None,
+                file_path=file_path,
+                line=parsed_line,
+                end_line=parsed_end_line,
                 label=str(item.get("label", "issue")),
                 decorations=list(item.get("decorations", [])),
                 subject=str(item.get("subject", "Review Finding")),

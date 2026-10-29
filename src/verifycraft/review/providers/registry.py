@@ -305,6 +305,7 @@ def resolve_provider_adapter(
             api_key=api_key,
             model_name=model or cfg.model,
             base_url=base_url,
+            allow_insecure_http=allow_insecure_http,
         )
 
     if cfg.provider_type == "bedrock":

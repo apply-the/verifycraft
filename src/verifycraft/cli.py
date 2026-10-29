@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from collections.abc import Sequence
 from pathlib import Path
@@ -103,6 +104,17 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("-v", "--version", action="version", version=f"verifycraft {__version__}")
+    parser.add_argument(
+        "--load-dotenv",
+        action="store_true",
+        help="Explicitly load environment variables from .env in repository root.",
+    )
+    parser.add_argument(
+        "--env-file",
+        type=Path,
+        default=None,
+        help="Explicit path to environment file to load.",
+    )
 
     subparsers = parser.add_subparsers(dest="subcommand", help="Available subcommands")
 
@@ -233,6 +245,17 @@ def build_parser() -> argparse.ArgumentParser:
         type=float,
         default=60.0,
         help="Review timeout in seconds (default: 60.0).",
+    )
+    review_parser.add_argument(
+        "--load-dotenv",
+        action="store_true",
+        help="Explicitly load environment variables from .env in repository root.",
+    )
+    review_parser.add_argument(
+        "--env-file",
+        type=Path,
+        default=None,
+        help="Explicit path to environment file to load.",
     )
 
     return parser
@@ -412,9 +435,16 @@ def _execute_review(args: argparse.Namespace) -> None:
 
 
 def main(argv: Sequence[str] | None = None) -> None:
-    load_dotenv_if_present()
     parser = build_parser()
     args = parser.parse_args(argv if argv is not None else sys.argv[1:])
+
+    opt_in = (
+        bool(getattr(args, "load_dotenv", False))
+        or getattr(args, "env_file", None) is not None
+        or os.environ.get("VERIFYCRAFT_LOAD_DOTENV", "").strip().lower() in ("1", "true", "yes")
+    )
+    if opt_in:
+        load_dotenv_if_present(env_path=getattr(args, "env_file", None), opt_in=True)
 
     if not args.subcommand:
         parser.print_help()

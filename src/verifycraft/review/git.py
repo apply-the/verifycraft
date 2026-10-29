@@ -385,14 +385,138 @@ class GitContextCollector:
         return related
 
     def _truncate_diff(self, diff_text: str, max_diff_lines: int, omitted_scope: list[str]) -> str:
-        diff_lines = diff_text.splitlines()
-        diff_lines_count = len(diff_lines)
-        if diff_lines_count > max_diff_lines:
+        return self._bounded_diff_acquisition(diff_text, max_diff_lines, omitted_scope)
+
+    def _bounded_diff_acquisition(
+        self,
+        diff_text: str,
+        max_diff_lines: int,
+        omitted_scope: list[str],
+    ) -> str:
+        """Bounded, structure-aware diff acquisition.
+
+        Invariants:
+        1. Never cut a diff in the middle of a hunk.
+        2. Preserve changed file identities and boundaries.
+        3. Fair representation across modified files.
+        4. Explicit accounting of fully, partially, and unreviewed files.
+        """
+        raw_lines = diff_text.splitlines()
+        total_lines = len(raw_lines)
+        if total_lines <= max_diff_lines:
+            return diff_text
+
+        omitted_scope.append(
+            f"Diff truncated: {total_lines} lines exceeded limit of {max_diff_lines} lines"
+        )
+
+        # Split diff into per-file chunks
+        file_chunks = re.split(r"(^diff --git )", diff_text, flags=re.MULTILINE)
+        if len(file_chunks) <= 1:
+            # Fallback if diff has non-standard formatting
+            return "\n".join(raw_lines[:max_diff_lines])
+
+        files_data: list[tuple[str, str, list[str]]] = []
+        for i in range(1, len(file_chunks), 2):
+            full_chunk = file_chunks[i] + file_chunks[i + 1]
+            c_lines = full_chunk.splitlines()
+            header_info = self._parse_diff_header(c_lines)
+            path = header_info[0] if header_info else f"unknown_file_{i}"
+
+            # Separate header and hunks
+            hunk_splits = re.split(r"(?=^@@ )", full_chunk, flags=re.MULTILINE)
+            header_part = hunk_splits[0]
+            hunk_parts = hunk_splits[1:] if len(hunk_splits) > 1 else []
+            files_data.append((path, header_part, hunk_parts))
+
+        num_files = len(files_data)
+        base_quota_lines = max(30, max_diff_lines // max(1, num_files))
+
+        retained_file_outputs: list[str] = []
+        current_total_lines = 0
+        fully_reviewed: list[str] = []
+        partially_reviewed: list[tuple[str, int, int]] = []  # (path, kept_hunks, total_hunks)
+        unreviewed: list[str] = []
+
+        # First pass: Allocate up to base quota per file in complete hunks
+        deferred_hunks: list[tuple[str, list[str]]] = []
+
+        for path, header, hunks in files_data:
+            if not hunks:
+                # E.g. binary or empty diff
+                retained_file_outputs.append(header)
+                current_total_lines += len(header.splitlines())
+                fully_reviewed.append(path)
+                continue
+
+            header_lines_count = len(header.splitlines())
+            if current_total_lines + header_lines_count >= max_diff_lines:
+                unreviewed.append(path)
+                continue
+
+            kept_hunks: list[str] = []
+            file_lines_used = header_lines_count
+
+            for idx, hunk in enumerate(hunks):
+                h_lines = len(hunk.splitlines())
+                if (
+                    file_lines_used + h_lines <= base_quota_lines
+                    and current_total_lines + file_lines_used + h_lines <= max_diff_lines
+                ):
+                    kept_hunks.append(hunk)
+                    file_lines_used += h_lines
+                else:
+                    deferred_hunks.append((path, hunks[idx:]))
+                    break
+
+            if kept_hunks:
+                file_chunk = header + "".join(kept_hunks)
+                retained_file_outputs.append(file_chunk)
+                current_total_lines += file_lines_used
+                if len(kept_hunks) == len(hunks):
+                    fully_reviewed.append(path)
+                else:
+                    partially_reviewed.append((path, len(kept_hunks), len(hunks)))
+            else:
+                unreviewed.append(path)
+
+        # Second pass: If budget remains, append deferred hunks where feasible without splitting
+        if current_total_lines < max_diff_lines and deferred_hunks:
+            for path, rest_hunks in deferred_hunks:
+                for hunk in rest_hunks:
+                    h_lines = len(hunk.splitlines())
+                    if current_total_lines + h_lines <= max_diff_lines:
+                        # Append hunk to the corresponding file output
+                        for idx, out in enumerate(retained_file_outputs):
+                            if out.startswith(f"diff --git a/{path} ") or f" b/{path}\n" in out:
+                                retained_file_outputs[idx] = out + hunk
+                                current_total_lines += h_lines
+                                break
+                    else:
+                        break
+
+        # Record structured audit notes
+        omitted_scope.append(
+            f"Diff exceeded budget ({total_lines} lines > {max_diff_lines} limit). "
+            f"Review scope is PARTIAL: {len(fully_reviewed)} file(s) fully examined, "
+            f"{len(partially_reviewed)} partially examined, {len(unreviewed)} omitted."
+        )
+        if partially_reviewed:
+            details = ", ".join(f"{p} ({k}/{t} hunks)" for p, k, t in partially_reviewed[:5])
+            more = f" and {len(partially_reviewed) - 5} more" if len(partially_reviewed) > 5 else ""
+            omitted_scope.append(f"Partially reviewed files: {details}{more}")
+        if unreviewed:
+            unrev_summary = ", ".join(unreviewed[:5])
+            more_unrev = f" and {len(unreviewed) - 5} more" if len(unreviewed) > 5 else ""
             omitted_scope.append(
-                f"Diff truncated: {diff_lines_count} lines exceeded limit of {max_diff_lines} lines"
+                f"Omitted files exceeding diff budget: {unrev_summary}{more_unrev}"
             )
-            return "\n".join(diff_lines[:max_diff_lines])
-        return diff_text
+        omitted_scope.append(
+            "SCOPE LIMITATION: Incomplete diff scope cannot be interpreted as proof of clean code "
+            "or absence of merge risks."
+        )
+
+        return "".join(retained_file_outputs)
 
     def _truncate_files(
         self,
@@ -420,15 +544,40 @@ class GitContextCollector:
         omitted_scope: list[str],
     ) -> int:
         total_bytes = 0
+        num_files = len(changed_files)
+        per_file_bytes = max(2048, max_context_bytes // max(1, num_files))
+
         for path, cfile in changed_files.items():
             if cfile.status == "deleted":
                 continue
             content = self.read_file_at_ref(path, head_revision)
             if content is not None:
-                encoded_len = len(content.encode("utf-8"))
-                if total_bytes + encoded_len <= max_context_bytes:
+                encoded = content.encode("utf-8")
+                encoded_len = len(encoded)
+                if encoded_len <= per_file_bytes and total_bytes + encoded_len <= max_context_bytes:
                     cfile.content = content
                     total_bytes += encoded_len
+                elif total_bytes + per_file_bytes <= max_context_bytes:
+                    # Bounded window around changed hunks for large files
+                    lines = content.splitlines()
+                    needed_lines: set[int] = set()
+                    for hunk in cfile.hunks:
+                        start = max(1, hunk.new_start - 25)
+                        end = min(len(lines), hunk.new_start + max(hunk.new_lines, 1) + 25)
+                        needed_lines.update(range(start, end + 1))
+
+                    window_lines: list[str] = []
+                    for idx, line in enumerate(lines, start=1):
+                        if idx in needed_lines:
+                            window_lines.append(line)
+                    window_content = "\n".join(window_lines)
+                    window_bytes = len(window_content.encode("utf-8"))
+                    cfile.content = window_content
+                    total_bytes += window_bytes
+                    omitted_scope.append(
+                        f"Content for '{path}' bounded to changed hunk windows "
+                        f"({window_bytes} bytes)."
+                    )
                 else:
                     omitted_scope.append(
                         f"Content for '{path}' omitted due to context size limits."
@@ -515,36 +664,167 @@ class GitContextCollector:
             is_working_tree=is_working_tree,
         )
 
+    def validate_semantic_anchor(
+        self,
+        file_path: str,
+        line: int | None,
+        subject: str,
+        description: str,
+        changed_files: dict[str, ChangedFile],
+        suggested_action: str | None = None,
+    ) -> tuple[int | None, str | None]:
+        """Validate or deterministically remap a candidate finding anchor.
+
+        If line cannot be grounded or verified against supporting source code,
+        downgrades to file-level comment (None). Never invents a location.
+        """
+        if file_path not in changed_files:
+            return None, f"File '{file_path}' was not modified in this review"
+
+        cfile = changed_files[file_path]
+        content_lines = cfile.content.splitlines() if cfile.content else []
+
+        combined_text = f"{subject}\n{description}\n{suggested_action or ''}"
+        backticked = re.findall(r"`([a-zA-Z0-9_\.\-:]+)`", combined_text)
+        quoted = re.findall(r"['\"]([a-zA-Z0-9_\.\-:]+)['\"]", combined_text)
+        identifiers = re.findall(r"\b[a-zA-Z_][a-zA-Z0-9_]{3,}\b", combined_text)
+
+        candidate_symbols: list[str] = []
+        for s in backticked + quoted:
+            s_clean = s.strip()
+            if len(s_clean) >= 3 and s_clean not in candidate_symbols:
+                candidate_symbols.append(s_clean)
+        for s in identifiers:
+            if (
+                len(s) >= 4
+                and s not in candidate_symbols
+                and s.lower()
+                not in (
+                    "this",
+                    "that",
+                    "with",
+                    "from",
+                    "should",
+                    "could",
+                    "would",
+                    "function",
+                    "method",
+                    "class",
+                    "issue",
+                    "finding",
+                )
+            ):
+                candidate_symbols.append(s)
+
+        # 1. Check if the cited line itself directly contains any candidate symbol
+        if line is not None and 1 <= line <= len(content_lines):
+            exact_line_text = content_lines[line - 1]
+            for sym in candidate_symbols:
+                if sym in exact_line_text:
+                    return line, None
+
+        # 2. Search for exact definition or unique reference match in file
+        if content_lines and candidate_symbols:
+            for sym in candidate_symbols:
+                def_matches: list[int] = []
+                hunk_matches: list[int] = []
+                all_matches: list[int] = []
+
+                for idx, src_line in enumerate(content_lines, start=1):
+                    if sym in src_line:
+                        all_matches.append(idx)
+                        if idx in cfile.changed_lines:
+                            hunk_matches.append(idx)
+                        trimmed = src_line.strip()
+                        is_def = (
+                            trimmed.startswith(f"def {sym}")
+                            or trimmed.startswith(f"class {sym}")
+                            or f"{sym} =" in trimmed
+                            or f"{sym}=" in trimmed
+                        )
+                        if is_def:
+                            def_matches.append(idx)
+
+                # Prioritize definition site in changed lines
+                hunk_defs = [
+                    line_num for line_num in def_matches if line_num in cfile.changed_lines
+                ]
+                if len(hunk_defs) == 1:
+                    remapped = hunk_defs[0]
+                    reason = (
+                        f"Anchor remapped from line {line} to line {remapped} "
+                        f"based on exact definition of '{sym}'"
+                        if line
+                        else None
+                    )
+                    return remapped, reason
+                if len(def_matches) == 1:
+                    remapped = def_matches[0]
+                    reason = (
+                        f"Anchor remapped from line {line} to line {remapped} "
+                        f"based on exact definition of '{sym}'"
+                        if line
+                        else None
+                    )
+                    return remapped, reason
+                if len(hunk_matches) == 1:
+                    remapped = hunk_matches[0]
+                    reason = (
+                        f"Anchor remapped from line {line} to line {remapped} "
+                        f"based on exact reference to '{sym}'"
+                        if line
+                        else None
+                    )
+                    return remapped, reason
+                if len(all_matches) == 1:
+                    remapped = all_matches[0]
+                    reason = (
+                        f"Anchor remapped from line {line} to line {remapped} "
+                        f"based on exact reference to '{sym}'"
+                        if line
+                        else None
+                    )
+                    return remapped, reason
+
+        # 3. If line is within 2 lines of candidate symbol in context:
+        if line is not None and 1 <= line <= len(content_lines):
+            target_slice = content_lines[max(0, line - 2) : min(len(content_lines), line + 1)]
+            slice_text = "\n".join(target_slice)
+            for sym in candidate_symbols:
+                if sym in slice_text:
+                    return line, None
+
+        # 4. If line is provided:
+        if line is not None:
+            in_changed = line in cfile.changed_lines or any(
+                hunk.new_start <= line <= hunk.new_start + max(hunk.new_lines - 1, 0)
+                for hunk in cfile.hunks
+            )
+            if not in_changed:
+                return None, (
+                    f"Line {line} is outside changed hunks in '{file_path}'; "
+                    "downgraded to file-level comment"
+                )
+            if not candidate_symbols:
+                return line, None
+            return None, (
+                f"Unanchored observation: Line {line} could not be semantically grounded "
+                f"to cited code in '{file_path}'; downgraded to file-level comment"
+            )
+
+        return None, None
+
     def validate_line_anchor(
         self,
         file_path: str,
         line: int | None,
         changed_files: dict[str, ChangedFile],
     ) -> tuple[int | None, str | None]:
-        """Validate line anchor against changed files and hunks.
-
-        Returns (validated_line, fallback_reason).
-        If the line is invalid or not in changed hunks, validated_line will be None
-        or clamped to a valid anchor, never an invented location.
-        """
-        if file_path not in changed_files:
-            return None, f"File '{file_path}' was not modified in this review"
-
-        cfile = changed_files[file_path]
-        if line is None:
-            return None, None
-
-        if line in cfile.changed_lines:
-            return line, None
-
-        # Check if line is within any changed hunk
-        for hunk in cfile.hunks:
-            if hunk.new_start <= line <= hunk.new_start + max(hunk.new_lines - 1, 0):
-                return line, None
-
-        # Not in any changed hunk
-        reason = (
-            f"Line {line} is outside changed hunks in '{file_path}'; "
-            "downgraded to file-level comment"
+        """Validate line anchor against changed files and hunks."""
+        return self.validate_semantic_anchor(
+            file_path=file_path,
+            line=line,
+            subject="",
+            description="",
+            changed_files=changed_files,
         )
-        return None, reason

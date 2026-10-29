@@ -68,7 +68,7 @@ def test_is_loopback_url() -> None:
     assert is_loopback_url("http://localhost:11434/v1") is True
     assert is_loopback_url("http://127.0.0.1:8000/v1") is True
     assert is_loopback_url("http://[::1]:8080/v1") is True
-    assert is_loopback_url("http://0.0.0.0:1234/v1") is True
+    assert is_loopback_url("http://0.0.0.0:1234/v1") is False
     assert is_loopback_url("https://api.openai.com/v1") is False
     assert is_loopback_url("http://remote-server.com:8000/v1") is False
     assert is_loopback_url("invalid-url") is False
@@ -653,8 +653,9 @@ def test_cli_allows_insecure_remote_http_with_flag(
 
 
 def test_is_loopback_url_edge_cases() -> None:
+    assert is_loopback_url("http://127.0.0.1:8000") is True
     assert is_loopback_url("http://127.0.0.2:8000") is True
-    assert is_loopback_url("http://0.0.0.0:8000") is True
+    assert is_loopback_url("http://0.0.0.0:8000") is False
     assert is_loopback_url("http://192.168.1.1:8000") is False
     assert is_loopback_url("http://[:::1]:8000") is False
 
@@ -721,7 +722,7 @@ def test_openai_compatible_empty_choices() -> None:
         model_name="deepseek-flash",
     )
     adapter._client = mock_client
-    with pytest.raises(ProviderCallError, match="Model returned invalid JSON"):
+    with pytest.raises(ProviderCallError, match="returned an empty response"):
         adapter.review("Prompt")
 
 

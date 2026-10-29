@@ -292,6 +292,36 @@ report_model_free = engine.review(req_model_free)
 
 ---
 
+## Review Quality Gate & Security Policies
+
+VerifyCraft enforces strict review quality and defensive execution invariants:
+
+### 1. Safe Environment Loading Policy
+- Automatic loading of `.env` files from untrusted working directories is disabled by default.
+- Users can explicitly opt in to load environment variables using `--load-dotenv`, `--env-file <path>`, or setting `VERIFYCRAFT_LOAD_DOTENV=1`.
+
+### 2. Network Endpoint Security
+- Plain HTTP (`http://`) is strictly limited to local loopback addresses (`localhost`, `127.0.0.1`, `::1`).
+- Unspecified addresses (`0.0.0.0`, `::`) are bind wildcards, not loopback interfaces, and require `--allow-insecure-http` when accessed over plain HTTP.
+- Custom `base_url` settings across all providers (including Anthropic) undergo endpoint validation before client initialization.
+
+### 3. Review Completeness & Diff Preservation
+- Diffs are acquired deterministically without ever splitting hunks in half.
+- When diffs exceed line limits, fair representation is allocated across changed files to ensure critical changes at the end of the patch are examined.
+- When diff or context scope is truncated, the review scope is explicitly marked as `PARTIAL`. Incomplete reviews cannot be interpreted as proof of clean code.
+
+### 4. Semantic Anchor Grounding
+- Line anchors are verified against actual supporting symbols, definitions, or code tokens.
+- When an LLM cites a valid symbol at a drifted line, VerifyCraft deterministically remaps to the actual definition or reference site.
+- Findings that cannot be semantically grounded in code are downgraded to file-level comments rather than fabricated locations.
+
+### 5. Severity, Verification Status, and Strict Mode
+- Finding severity (Critical, High, Medium, Low, Info) is kept distinct from merge-blocking status (`blocking: bool`).
+- Unverified model inferences are not silently promoted to blocking issues.
+- Under `--strict` mode, VerifyCraft exits with code `2` only when actionable blocking issues are confirmed.
+
+---
+
 ## Limitations & Token Accounting
 
 - **JSON Mode Differences**: Some open-weights or local servers do not natively support OpenAI's `response_format={"type": "json_object"}`. VerifyCraft's shared OpenAI-compatible transport automatically detects this and gracefully falls back to prompt-guided JSON schema instructions.

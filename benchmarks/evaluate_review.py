@@ -25,8 +25,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import time
 from dataclasses import asdict, dataclass
+from pathlib import Path
 from typing import Any, Literal
 
 from benchmarks.review_dataset import (
@@ -49,10 +51,12 @@ from verifycraft.review.providers.base import (
     ReviewerModelAdapter,
     load_dotenv_if_present,
 )
-from verifycraft.review.providers.registry import PROVIDER_CONFIGS, resolve_provider_adapter
+from verifycraft.review.providers.registry import (
+    PROVIDER_CONFIGS,
+    is_local_provider,
+    resolve_provider_adapter,
+)
 from verifycraft.review.requirements import ParsedRequirement
-
-load_dotenv_if_present()
 
 VARIANT_A_KEY = "variant_a"
 VARIANT_B_KEY = "variant_b"
@@ -1325,6 +1329,26 @@ def assess_release_gate(
     }
 
 
+def _check_credentials_available(provider: str, base_url: str | None = None) -> bool:
+    canonical = provider.lower()
+    if is_local_provider(canonical, base_url=base_url):
+        return True
+    cfg = PROVIDER_CONFIGS.get(canonical)
+    if cfg and cfg.api_key_env_var and os.environ.get(cfg.api_key_env_var):
+        return True
+    if canonical == "gemini":
+        return bool(os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY"))
+    if canonical == "bedrock":
+        return bool(
+            os.environ.get("AWS_ACCESS_KEY_ID")
+            or os.environ.get("AWS_PROFILE")
+            or os.environ.get("AWS_DEFAULT_REGION")
+        )
+    if canonical in ("openai", "openai-compatible"):
+        return bool(os.environ.get("OPENAI_API_KEY"))
+    return False
+
+
 def run_evaluation(
     split: Literal["dev", "held_out", "all"] = "all",
     mode: Literal["simulated", "live"] = "simulated",
@@ -1337,6 +1361,11 @@ def run_evaluation(
     """Execute the 3-variant review quality evaluation suite across all cases."""
     cases = load_review_eval_dataset(split=split)
 
+    credentials_available = (
+        _check_credentials_available(provider, base_url=base_url)
+        if mode == "live"
+        else False
+    )
     if mode == "live":
         try:
             resolved_adapter = resolve_provider_adapter(
@@ -1454,8 +1483,8 @@ def run_evaluation(
         "release_gate": assess_release_gate(
             mode=mode,
             live_active=live_active,
-            credentials_available=bool(live_active),
-            live_provider_call_completed=live_active,
+            credentials_available=credentials_available if mode == "live" else False,
+            live_provider_call_completed=bool(live_active and len(results) > 0),
             agg_b=agg_b,
             agg_c=agg_c,
             split=split,
@@ -1533,7 +1562,26 @@ def main() -> None:
         action="store_true",
         help="Output structured JSON report.",
     )
+    parser.add_argument(
+        "--load-dotenv",
+        action="store_true",
+        help="Explicitly load environment variables from .env in repository root.",
+    )
+    parser.add_argument(
+        "--env-file",
+        type=Path,
+        default=None,
+        help="Explicit path to environment file to load.",
+    )
     args = parser.parse_args()
+
+    opt_in = (
+        bool(args.load_dotenv)
+        or args.env_file is not None
+        or os.environ.get("VERIFYCRAFT_LOAD_DOTENV", "").strip().lower() in ("1", "true", "yes")
+    )
+    if opt_in:
+        load_dotenv_if_present(env_path=args.env_file, opt_in=True)
 
     mode_val: Literal["simulated", "live"] = (
         "live" if args.live or args.mode == "live" else "simulated"
