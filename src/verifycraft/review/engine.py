@@ -134,7 +134,6 @@ class ReviewEngine:
         model: str | None = None,
         base_url: str | None = None,
         allow_insecure_http: bool = False,
-        timeout_seconds: float = 60.0,
     ) -> ReviewerModelAdapter | None:
         name = provider_name.lower().strip()
         if name in ("none", "model-free", "agent"):
@@ -162,7 +161,6 @@ class ReviewEngine:
             model=request.model,
             base_url=request.base_url,
             allow_insecure_http=request.allow_insecure_http,
-            timeout_seconds=request.policy.timeout_seconds,
         )
 
         # 2. Collect Git context
