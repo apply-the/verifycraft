@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import ipaddress
 import json
+import os
 import re
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 from urllib.parse import urlparse
 
@@ -123,6 +125,26 @@ def validate_endpoint_url(url: str, allow_insecure_http: bool = False) -> None:
     raise ProviderConfigurationError(
         f"Unsupported URL scheme '{scheme}' in endpoint '{url}'. Must be 'http' or 'https'."
     )
+
+
+def load_dotenv_if_present(env_path: Path | str | None = None) -> None:
+    """Load environment variables from a .env file if present without overriding existing vars."""
+    target = Path(env_path) if env_path is not None else Path(".env")
+    if not target.is_file():
+        return
+    try:
+        content = target.read_text(encoding="utf-8")
+        for line in content.splitlines():
+            trimmed = line.strip()
+            if not trimmed or trimmed.startswith("#") or "=" not in trimmed:
+                continue
+            key, val = trimmed.split("=", 1)
+            clean_key = key.strip()
+            clean_val = val.strip().strip("'\"")
+            if clean_key and clean_key not in os.environ:
+                os.environ[clean_key] = clean_val
+    except Exception:
+        pass
 
 
 @dataclass(frozen=True)

@@ -10,8 +10,13 @@ import os
 
 import pytest
 
-from verifycraft.review.providers.base import ProviderConfigurationError
+from verifycraft.review.providers.base import (
+    ProviderConfigurationError,
+    load_dotenv_if_present,
+)
 from verifycraft.review.providers.registry import resolve_provider_adapter
+
+load_dotenv_if_present()
 
 
 def test_deepseek_missing_credentials_raises(monkeypatch: pytest.MonkeyPatch) -> None:

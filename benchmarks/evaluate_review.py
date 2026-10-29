@@ -47,9 +47,12 @@ from verifycraft.review.providers.base import (
     RawCandidateFinding,
     RawRequirementAssessment,
     ReviewerModelAdapter,
+    load_dotenv_if_present,
 )
 from verifycraft.review.providers.registry import PROVIDER_CONFIGS, resolve_provider_adapter
 from verifycraft.review.requirements import ParsedRequirement
+
+load_dotenv_if_present()
 
 VARIANT_A_KEY = "variant_a"
 VARIANT_B_KEY = "variant_b"

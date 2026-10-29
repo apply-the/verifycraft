@@ -911,3 +911,27 @@ def test_strip_markdown_fences_without_closing_fence() -> None:
     fence_no_end = "```json\n" + SAMPLE_STRUCTURED_JSON
     res = ProviderResponseParser.parse_json_response(fence_no_end)
     assert res.summary == "Detected potential timing leak."
+
+
+def test_load_dotenv_if_present(tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    import os
+
+    from verifycraft.review.providers.base import load_dotenv_if_present
+
+    monkeypatch.delenv("TEST_VC_KEY", raising=False)
+    load_dotenv_if_present("non_existent_file.env")
+    env_file = tmp_path / ".env"
+    env_file.write_text("TEST_VC_KEY=my-secret-val\n# comment\nINVALID_LINE\n")
+    load_dotenv_if_present(env_file)
+    assert os.environ.get("TEST_VC_KEY") == "my-secret-val"
+    monkeypatch.delenv("TEST_VC_KEY", raising=False)
+
+
+def test_openai_api_key_not_leaked_to_deepseek(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-openai-only")
+    with pytest.raises(ProviderConfigurationError, match="DEEPSEEK_API_KEY"):
+        OpenAICompatibleReviewerAdapter(
+            config=PROVIDER_CONFIGS["deepseek"],
+            model_name="deepseek-flash",
+        )

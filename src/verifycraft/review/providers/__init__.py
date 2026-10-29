@@ -16,6 +16,7 @@ from verifycraft.review.providers.base import (
     RawRequirementAssessment,
     ReviewerModelAdapter,
     is_loopback_url,
+    load_dotenv_if_present,
     validate_endpoint_url,
 )
 from verifycraft.review.providers.bedrock import (
@@ -63,6 +64,7 @@ __all__ = [
     "format_provider_disclosure",
     "is_local_provider",
     "is_loopback_url",
+    "load_dotenv_if_present",
     "normalize_provider_name",
     "resolve_provider_adapter",
     "validate_endpoint_url",

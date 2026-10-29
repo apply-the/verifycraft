@@ -9,7 +9,7 @@ Together, Fireworks, DeepInfra, OpenRouter) and local inference servers
 from __future__ import annotations
 
 import os
-from typing import Any
+from typing import Any, NoReturn
 
 from verifycraft.review.providers.base import (
     ProviderCallError,
@@ -60,7 +60,7 @@ def _resolve_api_key(
     resolved_key = api_key
     if not resolved_key and config and config.api_key_env_var:
         resolved_key = os.environ.get(config.api_key_env_var)
-    if not resolved_key:
+    if not resolved_key and provider_name in ("openai", "openai-compatible"):
         resolved_key = os.environ.get("OPENAI_API_KEY")
 
     if resolved_key:
@@ -199,7 +199,7 @@ class OpenAICompatibleReviewerAdapter(ReviewerModelAdapter):
             err_msg = str(e).lower()
             # If endpoint does not support response_format, fallback to prompt-guided JSON
             if "response_format" in kwargs and (
-                "response_format" in err_msg or "json_object" in err_msg or "schema" in err_msg
+                "response_format" in err_msg or "json_object" in err_msg
             ):
                 fallback_kwargs = dict(kwargs)
                 del fallback_kwargs["response_format"]
@@ -209,7 +209,7 @@ class OpenAICompatibleReviewerAdapter(ReviewerModelAdapter):
                     self._handle_api_error(inner_e, timeout_seconds)
             self._handle_api_error(e, timeout_seconds)
 
-    def _handle_api_error(self, exc: Exception, timeout_seconds: float) -> None:
+    def _handle_api_error(self, exc: Exception, timeout_seconds: float) -> NoReturn:
         clean_err = self._sanitize(str(exc))
         err_lower = clean_err.lower()
         if "timeout" in err_lower or "timed out" in err_lower or "deadline" in err_lower:

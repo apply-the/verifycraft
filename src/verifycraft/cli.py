@@ -33,7 +33,7 @@ from verifycraft.contracts.review import (
 from verifycraft.engine import VerificationEngine
 from verifycraft.review.engine import ReviewEngine
 from verifycraft.review.git import GitError
-from verifycraft.review.providers.base import ProviderError
+from verifycraft.review.providers.base import ProviderError, load_dotenv_if_present
 from verifycraft.review.providers.registry import format_provider_disclosure
 
 
@@ -412,6 +412,7 @@ def _execute_review(args: argparse.Namespace) -> None:
 
 
 def main(argv: Sequence[str] | None = None) -> None:
+    load_dotenv_if_present()
     parser = build_parser()
     args = parser.parse_args(argv if argv is not None else sys.argv[1:])
 
