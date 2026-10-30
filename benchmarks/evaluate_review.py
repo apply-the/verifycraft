@@ -93,9 +93,7 @@ class BenchmarkProgressReporter:
         self.stream.write(f"ERROR: {message}\n")
         self.stream.flush()
 
-    def banner(
-        self, mode: str, provider: str, model: str, split: str, total_cases: int
-    ) -> None:
+    def banner(self, mode: str, provider: str, model: str, split: str, total_cases: int) -> None:
         if self.quiet:
             return
         planned = f" | Planned provider calls: {total_cases * 3}" if mode == "live" else ""
@@ -113,9 +111,7 @@ class BenchmarkProgressReporter:
         if not self.quiet:
             self.log(f"  -> {variant_name}: started call...")
 
-    def variant_done(
-        self, variant_name: str, latency: float, tokens: int | None = None
-    ) -> None:
+    def variant_done(self, variant_name: str, latency: float, tokens: int | None = None) -> None:
         if not self.quiet:
             tok_str = f" (tokens: {tokens})" if tokens is not None else ""
             self.log(f"  <- {variant_name}: completed in {latency:.2f}s{tok_str}")
@@ -1929,7 +1925,7 @@ def run_evaluation(
             error_msg = (
                 f"Live evaluation requested (--mode live) for provider '{provider}', "
                 f"but configuration failed: {err}\n"
-                f"Fails closed: export {env_hint}=\"your-{provider}-key\" or pass --env-file."
+                f'Fails closed: export {env_hint}="your-{provider}-key" or pass --env-file.'
             )
             reporter.error(error_msg)
             raise SystemExit(1) from err
@@ -1951,9 +1947,7 @@ def run_evaluation(
 
     for i, c in enumerate(cases):
         reporter.case_start(i + 1, len(cases), c.case_id)
-        m = evaluate_single_case(
-            c, adapter, adjudications=adjudications, reporter=reporter
-        )
+        m = evaluate_single_case(c, adapter, adjudications=adjudications, reporter=reporter)
         results.append(m)
 
     total_time = round(time.perf_counter() - start_time, 4)
