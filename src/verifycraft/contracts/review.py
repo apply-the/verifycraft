@@ -304,12 +304,23 @@ class ReviewRequest(BaseModel):
     provider: str = Field(
         default="gemini",
         description=(
-            "Reviewer provider name ('gemini', 'deterministic', 'fake', 'none', 'model-free')."
+            "Reviewer provider name ('gemini', 'openai', 'deepseek', "
+            "'ollama', 'anthropic', 'bedrock', etc.)."
         ),
     )
     model: str | None = Field(
         default=None,
-        description="Optional model identifier override (e.g. 'gemini-2.5-pro').",
+        description="Optional model identifier override (e.g. 'deepseek-flash', 'gpt-4o').",
+    )
+    base_url: str | None = Field(
+        default=None,
+        description=(
+            "Optional custom API endpoint URL (e.g. for local or OpenAI-compatible servers)."
+        ),
+    )
+    allow_insecure_http: bool = Field(
+        default=False,
+        description="Explicitly allow plain HTTP for non-loopback endpoints (insecure).",
     )
     policy: ReviewPolicy = Field(
         default_factory=ReviewPolicy,

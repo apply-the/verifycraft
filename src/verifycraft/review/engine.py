@@ -22,14 +22,12 @@ from verifycraft.contracts.review import (
 from verifycraft.review.counterexamples import CounterexampleChecker
 from verifycraft.review.git import ChangedFile, GitContextCollector, GitReviewContext
 from verifycraft.review.providers.base import (
-    ProviderConfigurationError,
     ProviderResponse,
     RawCandidateFinding,
     RawRequirementAssessment,
     ReviewerModelAdapter,
 )
-from verifycraft.review.providers.deterministic import DeterministicReviewerAdapter
-from verifycraft.review.providers.gemini import GeminiReviewerAdapter
+from verifycraft.review.providers.registry import resolve_provider_adapter
 from verifycraft.review.requirements import ParsedRequirement, RequirementsParser
 
 
@@ -134,22 +132,20 @@ class ReviewEngine:
         self,
         provider_name: str,
         model: str | None = None,
+        base_url: str | None = None,
+        allow_insecure_http: bool = False,
     ) -> ReviewerModelAdapter | None:
         name = provider_name.lower().strip()
         if name in ("none", "model-free", "agent"):
             return None
-
         if self._injected_adapter is not None:
             return self._injected_adapter
-        elif name in ("deterministic", "fake"):
-            return DeterministicReviewerAdapter()
-        elif name == "gemini":
-            return GeminiReviewerAdapter(model_name=model)
-        else:
-            raise ProviderConfigurationError(
-                f"Unsupported provider: '{provider_name}'. "
-                "Supported: 'gemini', 'deterministic', 'none'."
-            )
+        return resolve_provider_adapter(
+            provider_name=provider_name,
+            model=model,
+            base_url=base_url,
+            allow_insecure_http=allow_insecure_http,
+        )
 
     def review(
         self,
@@ -160,7 +156,12 @@ class ReviewEngine:
         start_time = time.monotonic()
 
         # 1. Validate and resolve reviewer model adapter early
-        adapter = self._get_adapter(request.provider, model=request.model)
+        adapter = self._get_adapter(
+            request.provider,
+            model=request.model,
+            base_url=request.base_url,
+            allow_insecure_http=request.allow_insecure_http,
+        )
 
         # 2. Collect Git context
         collector = GitContextCollector(request.repo_path)
@@ -241,11 +242,13 @@ class ReviewEngine:
             output_tokens=getattr(provider_resp, "output_tokens", None),
         )
 
-        resolved_model_name = getattr(
-            adapter,
-            "model_name",
-            request.model or ("model-free" if adapter is None else "deterministic"),
-        )
+        model_name_attr = getattr(adapter, "model_name", None)
+        if isinstance(model_name_attr, str):
+            resolved_model_name = model_name_attr
+        else:
+            resolved_model_name = request.model or (
+                "model-free" if adapter is None else "deterministic"
+            )
         model_info = ModelInfo(
             provider=request.provider,
             model_name=resolved_model_name,
@@ -273,10 +276,13 @@ class ReviewEngine:
         context: GitReviewContext,
         collector: GitContextCollector,
     ) -> ReviewFinding | None:
-        validated_line, fallback_reason = collector.validate_line_anchor(
+        validated_line, fallback_reason = collector.validate_semantic_anchor(
             file_path=raw.file_path,
             line=raw.line,
+            subject=raw.subject,
+            description=raw.description,
             changed_files=context.changed_files,
+            suggested_action=raw.suggested_action,
         )
 
         if (
@@ -302,6 +308,10 @@ class ReviewEngine:
         except ValueError:
             severity = FindingSeverity.MEDIUM
 
+        suggested_action = raw.suggested_action
+        if suggested_action and not suggested_action.startswith("(Proposed remedy"):
+            suggested_action = f"(Proposed remedy — model inferred): {suggested_action}"
+
         return ReviewFinding(
             id=f"rev-{counter:03d}",
             file_path=raw.file_path,
@@ -316,7 +326,7 @@ class ReviewEngine:
             requirement_ids=raw.requirement_ids,
             evidence_status=EvidenceStatus.MODEL_INFERRED,
             review_status=ReviewStatus.REPORTED,
-            suggested_action=raw.suggested_action,
+            suggested_action=suggested_action,
         )
 
     def _process_candidate_findings(
@@ -387,13 +397,137 @@ class ReviewEngine:
         return findings
 
     def _deduplicate_findings(self, findings: list[ReviewFinding]) -> list[ReviewFinding]:
-        deduped: list[ReviewFinding] = []
-        seen_keys: set[str] = set()
+        """Deduplicate findings semantically across different labels and formulations."""
+        if not findings:
+            return []
+
+        label_rank = {
+            ConventionalLabel.ISSUE: 6,
+            ConventionalLabel.SUGGESTION: 5,
+            ConventionalLabel.TODO: 4,
+            ConventionalLabel.QUESTION: 3,
+            ConventionalLabel.THOUGHT: 2,
+            ConventionalLabel.NITPICK: 1,
+            ConventionalLabel.PRAISE: 0,
+            ConventionalLabel.CHORE: 1,
+            ConventionalLabel.NOTE: 1,
+        }
+        severity_rank = {
+            FindingSeverity.CRITICAL: 4,
+            FindingSeverity.HIGH: 3,
+            FindingSeverity.MEDIUM: 2,
+            FindingSeverity.LOW: 1,
+            FindingSeverity.INFO: 0,
+        }
+
+        def _extract_core_tokens(f: ReviewFinding) -> tuple[set[str], set[str]]:
+            text = f"{f.subject}\n{f.description}"
+            quoted_symbols = {
+                s.strip().lower()
+                for s in re.findall(r"[`'\"]([a-zA-Z0-9_\.\-:]+)[`'\"]", text)
+                if len(s.strip()) >= 3
+            }
+            code_identifiers = {
+                ident.lower()
+                for ident in re.findall(r"\b[a-zA-Z_][a-zA-Z0-9_\.]{2,}\b", f.subject)
+                if "_" in ident or "." in ident or ident.isupper()
+            }
+            all_symbols = quoted_symbols | code_identifiers
+            words = {
+                w.lower()
+                for w in re.findall(r"\b[a-zA-Z_][a-zA-Z0-9_]{3,}\b", f.subject)
+                if w.lower() not in self.STOP_WORDS
+            }
+            return all_symbols, words
+
+        clusters: list[list[ReviewFinding]] = []
+
         for f in findings:
-            key = f"{f.file_path}:{f.line}:{f.label}:{f.subject}"
-            if key not in seen_keys:
-                seen_keys.add(key)
-                deduped.append(f)
+            syms, words = _extract_core_tokens(f)
+            placed = False
+            for cluster in clusters:
+                rep = cluster[0]
+                if rep.file_path != f.file_path:
+                    continue
+
+                rep_syms, rep_words = _extract_core_tokens(rep)
+
+                # Check line proximity
+                lines_compatible = False
+                if rep.line is None and f.line is None:
+                    lines_compatible = True
+                elif rep.line is not None and f.line is not None:
+                    dist = abs(rep.line - f.line)
+                    if dist <= 10:
+                        lines_compatible = True
+                    elif dist <= 30:
+                        lines_compatible = bool(syms and rep_syms and (syms & rep_syms))
+                    else:
+                        lines_compatible = False
+                else:
+                    # One unanchored, one anchored: compatible if exact symbol matches
+                    lines_compatible = bool(syms and rep_syms and (syms & rep_syms))
+
+                if not lines_compatible:
+                    continue
+
+                # Check semantic overlap
+                shared_syms = syms & rep_syms
+                shared_words = words & rep_words
+                word_union = words | rep_words
+                jaccard = (len(shared_words) / len(word_union)) if word_union else 0.0
+
+                if shared_syms or jaccard >= 0.5:
+                    cluster.append(f)
+                    placed = True
+                    break
+
+            if not placed:
+                clusters.append([f])
+
+        deduped: list[ReviewFinding] = []
+        for cluster in clusters:
+            if len(cluster) == 1:
+                deduped.append(cluster[0])
+                continue
+
+            # Sort cluster by label priority then severity priority
+            sorted_cluster = sorted(
+                cluster,
+                key=lambda item: (
+                    label_rank.get(item.label, 1),
+                    severity_rank.get(item.severity, 1),
+                ),
+                reverse=True,
+            )
+            primary = sorted_cluster[0]
+            merged_desc = primary.description
+            notes: list[str] = []
+
+            for other in sorted_cluster[1:]:
+                if other.subject != primary.subject:
+                    notes.append(f"*(Related perspective [{other.label.value}]: {other.subject})*")
+
+            if notes:
+                merged_desc = f"{merged_desc}\n\n" + "\n\n".join(notes)
+
+            # Preserve primary's blocking and severity decisions to avoid inflating
+            # blocking status from unverified or subordinate cluster members.
+            is_blocking = primary.blocking
+            sev = primary.severity
+            all_req_ids = sorted({req for item in cluster for req in item.requirement_ids})
+
+            deduped.append(
+                primary.model_copy(
+                    update={
+                        "description": merged_desc,
+                        "blocking": is_blocking,
+                        "severity": sev,
+                        "requirement_ids": all_req_ids,
+                    }
+                )
+            )
+
         return deduped
 
     STOP_WORDS = {
@@ -742,8 +876,12 @@ class ReviewEngine:
         context_window: int = 25,
     ) -> str:
         """Format a changed file with 1-indexed line numbers and bounded surrounding context."""
+        if getattr(cfile, "is_context_omitted", False):
+            return "(Content omitted due to context size limits)"
         if not cfile.content:
             return "(Empty file)"
+        if cfile.prompt_context is not None:
+            return cfile.prompt_context
 
         lines = cfile.content.splitlines()
         total_lines = len(lines)

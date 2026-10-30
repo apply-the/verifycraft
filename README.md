@@ -113,13 +113,27 @@ pip install -e ".[dev]"
 VerifyCraft v0.2.0 introduces the **first working, requirements-aware semantic code review engine**:
 It maps Git diffs to relevant surrounding context, evaluates against optional requirements, runs semantic analysis via model providers (e.g. Gemini) or deterministic adapters, checks for compensating controls in surrounding files, and generates actionable [Conventional Comments](https://conventionalcomments.org/) and structured JSON.
 
-### Review CLI
+### Review CLI & Universal Providers
 
-Review a Git diff against optional requirements:
+VerifyCraft is genuinely model-agnostic, supporting major cloud providers (OpenAI, DeepSeek, Kimi, Grok, Anthropic, Bedrock, Gemini), local inference servers (Ollama, LM Studio, vLLM, llama.cpp), and keyless candidate ingestion. See [docs/providers.md](docs/providers.md) for the complete provider matrix and quickstarts.
 
 ```bash
-# Set Gemini API key for live LLM review
-export GEMINI_API_KEY="your-gemini-api-key"
+# Review with DeepSeek
+export DEEPSEEK_API_KEY="your-deepseek-api-key"
+verifycraft review . --base main --head HEAD --provider deepseek --model deepseek-chat --format comments
+
+# Review with local Ollama (100% offline, zero cloud API keys required)
+verifycraft review . --base main --head HEAD --provider ollama --model llama3.1:latest
+
+# Review with Anthropic Claude
+export ANTHROPIC_API_KEY="your-anthropic-api-key"
+verifycraft review . --base main --head HEAD --provider anthropic --model claude-3-5-sonnet-20241022
+
+# Review with AWS Bedrock (standard AWS credentials)
+verifycraft review . --base main --head HEAD --provider bedrock --model anthropic.claude-3-5-sonnet-20240620-v1:0
+
+# Review with custom OpenAI-compatible endpoint
+verifycraft review . --base main --head HEAD --provider openai-compatible --base-url http://127.0.0.1:8000/v1 --model local-model
 
 # Review changes between main and current branch against requirement specs
 verifycraft review . \
@@ -128,20 +142,6 @@ verifycraft review . \
   --requirements docs/auth.md \
   --provider gemini \
   --format markdown
-
-# Review without requirements and emit Conventional Comments
-verifycraft review . \
-  --base main \
-  --head feature/auth \
-  --provider gemini \
-  --format comments
-
-# Emit structured machine-readable JSON report
-verifycraft review . \
-  --base origin/main \
-  --head HEAD \
-  --provider gemini \
-  --format json
 
 # Run offline deterministic test review (no API key required)
 verifycraft review . \
@@ -160,8 +160,10 @@ verifycraft review . \
 | `--head` | Head git revision, branch, or commit | `HEAD` |
 | `--requirements` | Path to requirement document or text (repeatable) | None |
 | `--candidates` | Path to JSON file containing candidate findings for model-free review | None |
-| `--provider` | Review provider adapter (`gemini`, `deterministic`, `none`). Explicit provider or `--candidates` required | None |
-| `--model` | Model name override for LLM provider (e.g. `gemini-2.5-pro`) | `gemini-2.5-flash` |
+| `--provider` | Review provider: `deepseek`, `openai`, `anthropic`, `bedrock`, `gemini`, `ollama`, `lmstudio`, `vllm`, `llamacpp`, `openai-compatible`, `deterministic`, `none`. | None |
+| `--model` | Model name override for LLM provider (e.g. `deepseek-chat`, `gpt-4o`) | Provider default |
+| `--base-url` | Custom API base URL for local inference or OpenAI-compatible server | Provider default |
+| `--allow-insecure-http` | Allow plain HTTP for non-loopback endpoints (insecure) | Disabled |
 | `--format` | Output format: `markdown`, `json`, `comments` | `markdown` |
 | `--strict` | Exit with code 2 if any blocking issues are reported | Disabled |
 | `--timeout` | Review timeout in seconds | `60.0` |

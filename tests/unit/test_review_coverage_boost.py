@@ -697,3 +697,215 @@ def test_review_engine_requirement_satisfied_via_compensating_control(git_repo: 
     )
     assert report.requirement_assessments[0].requirement_id == "REQ-EXP-01"
     assert report.requirement_assessments[0].status == RequirementStatus.APPEARS_SATISFIED
+
+
+# ==============================================================================
+# 9. Additional Coverage for Review Engine, Git Context & Anchoring
+# ==============================================================================
+
+
+def test_dotenv_oserror_handling(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from verifycraft.review.providers.base import load_dotenv_if_present
+
+    env_file = tmp_path / ".env"
+    env_file.write_text("SOME_KEY=val\n")
+    with patch.object(Path, "read_text", side_effect=OSError("Read error")):
+        loaded = load_dotenv_if_present(env_path=env_file, opt_in=True)
+        assert loaded is False
+
+
+def test_deduplicate_findings_distance_and_unanchored_coverage() -> None:
+    engine = ReviewEngine()
+
+    # Case A: Different files -> not clustered
+    f1 = ReviewFinding(
+        id="f1",
+        file_path="src/a.py",
+        line=10,
+        label=ConventionalLabel.ISSUE,
+        subject="Check `LOOPBACK` configuration",
+        description="Invalid config",
+        severity=FindingSeverity.HIGH,
+        evidence_status=EvidenceStatus.MODEL_INFERRED,
+    )
+    f2 = ReviewFinding(
+        id="f2",
+        file_path="src/b.py",
+        line=10,
+        label=ConventionalLabel.ISSUE,
+        subject="Check `LOOPBACK` configuration",
+        description="Invalid config",
+        severity=FindingSeverity.HIGH,
+        evidence_status=EvidenceStatus.MODEL_INFERRED,
+    )
+    res = engine._deduplicate_findings([f1, f2])
+    assert len(res) == 2
+
+    # Case B: Distance between 11 and 30 with shared symbol -> clustered
+    f3 = ReviewFinding(
+        id="f3",
+        file_path="src/a.py",
+        line=30,
+        label=ConventionalLabel.QUESTION,
+        subject="Should `LOOPBACK` be used here?",
+        description="Question about loopback",
+        severity=FindingSeverity.MEDIUM,
+        evidence_status=EvidenceStatus.MODEL_INFERRED,
+    )
+    res_b = engine._deduplicate_findings([f1, f3])
+    assert len(res_b) == 1
+
+    # Case C: One anchored, one unanchored with shared symbol -> clustered
+    f4 = ReviewFinding(
+        id="f4",
+        file_path="src/a.py",
+        line=None,
+        label=ConventionalLabel.SUGGESTION,
+        subject="Refactor `LOOPBACK` logic",
+        description="Suggestion for loopback",
+        severity=FindingSeverity.LOW,
+        evidence_status=EvidenceStatus.MODEL_INFERRED,
+    )
+    res_c = engine._deduplicate_findings([f1, f4])
+    assert len(res_c) == 1
+
+
+def test_semantic_anchor_def_and_context_slice() -> None:
+    from verifycraft.review.git import DiffHunk
+
+    collector = GitContextCollector(repo_path=".")
+    content = (
+        "import os\n"
+        "# comment\n"
+        "def helper_func():\n"
+        "    return 1\n"
+        "def main():\n"
+        "    return helper_func()\n"
+        "val = 42\n"
+    )
+    cfile = ChangedFile(
+        path="src/example.py",
+        status="modified",
+        changed_lines={3, 4},
+        hunks=[DiffHunk(old_start=1, old_lines=7, new_start=1, new_lines=7, content="...")],
+        content=content,
+    )
+    changed = {"src/example.py": cfile}
+
+    # Def match in file
+    line, reason = collector.validate_semantic_anchor(
+        file_path="src/example.py",
+        line=100,
+        subject="Issue in `helper_func`",
+        description="Details about `helper_func`",
+        changed_files=changed,
+    )
+    assert line == 3
+
+    # Slice match: line 4 is within 2 lines of helper_func (line 3)
+    # Valid anchor line 4 is retained!
+    line_slice, reason_slice = collector.validate_semantic_anchor(
+        file_path="src/example.py",
+        line=4,
+        subject="Issue in `helper_func`",
+        description="Details about `helper_func`",
+        changed_files=changed,
+    )
+    assert line_slice == 4
+
+
+def test_bounded_diff_acquisition_coverage_branches() -> None:
+    collector = GitContextCollector(repo_path=".")
+    omitted: list[str] = []
+
+    # Diff with binary file (no hunks) and many files to trigger summary truncation (> 5 files)
+    parts: list[str] = []
+    # 1. Binary file with no @@ hunks
+    parts.append("diff --git a/bin.dat b/bin.dat\nBinary files differ\n")
+    # 2. 7 files with hunks to trigger > 5 partially reviewed and unreviewed
+    for i in range(1, 9):
+        parts.append(
+            f"diff --git a/file{i}.py b/file{i}.py\n"
+            f"--- a/file{i}.py\n"
+            f"+++ b/file{i}.py\n"
+            f"@@ -1,5 +1,5 @@\n"
+            f"+ line {i} a\n"
+            f"+ line {i} b\n"
+            f"@@ -10,5 +10,5 @@\n"
+            f"+ line {i} c\n"
+            f"+ line {i} d\n"
+        )
+    diff_text = "".join(parts)
+    res = collector._bounded_diff_acquisition(diff_text, max_diff_lines=25, omitted_scope=omitted)
+    assert res is not None
+    assert any("Diff exceeded budget" in note for note in omitted)
+    assert any("more" in note for note in omitted)
+
+
+def test_populate_file_contents_windowing_and_overflow() -> None:
+    from verifycraft.review.git import DiffHunk
+
+    collector = GitContextCollector(repo_path=".")
+    # Make big_content exceed per_file_bytes (e.g. 500 lines = ~15,000 bytes)
+    big_content = "\n".join(
+        f"line {i} with lots of padding content for size" for i in range(1, 500)
+    )
+
+    cfile = ChangedFile(
+        path="src/big.py",
+        status="modified",
+        changed_lines={50},
+        hunks=[DiffHunk(old_start=45, old_lines=10, new_start=45, new_lines=10, content="...")],
+    )
+    omitted: list[str] = []
+    with patch.object(collector, "read_file_at_ref", return_value=big_content):
+        # Windowing triggered because big_content exceeds per_file_bytes (per_file_bytes=2048)
+        total = collector._populate_file_contents(
+            changed_files={"src/big.py": cfile},
+            head_revision="HEAD",
+            max_context_bytes=6000,
+            omitted_scope=omitted,
+        )
+        assert total > 0
+        assert any("bounded to changed hunk windows" in note for note in omitted)
+
+        # Tight window fallback when budget is tighter
+        omitted_tight: list[str] = []
+        cfile_tight = ChangedFile(
+            path="src/big.py",
+            status="modified",
+            changed_lines={50},
+            hunks=[DiffHunk(old_start=45, old_lines=10, new_start=45, new_lines=10, content="...")],
+        )
+        total_tight = collector._populate_file_contents(
+            changed_files={"src/big.py": cfile_tight},
+            head_revision="HEAD",
+            max_context_bytes=2048,
+            omitted_scope=omitted_tight,
+        )
+        assert total_tight > 0
+        assert any("bounded to tight hunk windows" in note for note in omitted_tight)
+
+        # Context limit overflow
+        omitted_overflow: list[str] = []
+        cfile_overflow = ChangedFile(path="src/big.py", status="modified", changed_lines={50})
+        total_zero = collector._populate_file_contents(
+            changed_files={"src/big.py": cfile_overflow},
+            head_revision="HEAD",
+            max_context_bytes=10,
+            omitted_scope=omitted_overflow,
+        )
+        assert total_zero == 0
+        assert any("omitted due to context size limits" in note for note in omitted_overflow)
+
+
+def test_cli_load_dotenv_invocation(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    env_file = tmp_path / "custom.env"
+    env_file.write_text("CUSTOM_TEST_VAR=hello\n")
+    # Test opt-in loading via --env-file
+    with pytest.raises(SystemExit) as exc:
+        main(["--env-file", str(env_file)])
+    assert exc.value.code == 0
+    import os
+
+    assert os.environ.get("CUSTOM_TEST_VAR") == "hello"

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from collections.abc import Sequence
 from pathlib import Path
@@ -33,7 +34,8 @@ from verifycraft.contracts.review import (
 from verifycraft.engine import VerificationEngine
 from verifycraft.review.engine import ReviewEngine
 from verifycraft.review.git import GitError
-from verifycraft.review.providers.base import ProviderError
+from verifycraft.review.providers.base import ProviderError, load_dotenv_if_present
+from verifycraft.review.providers.registry import format_provider_disclosure
 
 
 def _format_verification_summary(result: VerificationResult) -> str:
@@ -102,6 +104,17 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("-v", "--version", action="version", version=f"verifycraft {__version__}")
+    parser.add_argument(
+        "--load-dotenv",
+        action="store_true",
+        help="Explicitly load environment variables from .env in repository root.",
+    )
+    parser.add_argument(
+        "--env-file",
+        type=Path,
+        default=None,
+        help="Explicit path to environment file to load.",
+    )
 
     subparsers = parser.add_subparsers(dest="subcommand", help="Available subcommands")
 
@@ -196,14 +209,25 @@ def build_parser() -> argparse.ArgumentParser:
         "--provider",
         default=None,
         help=(
-            "Reviewer model provider: 'gemini', 'deterministic', 'fake', 'none'. "
+            "Reviewer model provider: 'gemini', 'openai', 'deepseek', 'anthropic', "
+            "'bedrock', 'ollama', 'lmstudio', 'openai-compatible', 'deterministic', 'none'. "
             "Required unless --candidates is provided."
         ),
     )
     review_parser.add_argument(
         "--model",
         default=None,
-        help="Model name override (e.g. 'gemini-2.5-pro').",
+        help="Model name override (e.g. 'deepseek-chat', 'gpt-4o', 'gemini-2.5-pro').",
+    )
+    review_parser.add_argument(
+        "--base-url",
+        default=None,
+        help="Base URL for custom OpenAI-compatible or local inference server.",
+    )
+    review_parser.add_argument(
+        "--allow-insecure-http",
+        action="store_true",
+        help="Explicitly allow plain HTTP for non-loopback endpoints (insecure).",
     )
     review_parser.add_argument(
         "--format",
@@ -221,6 +245,17 @@ def build_parser() -> argparse.ArgumentParser:
         type=float,
         default=60.0,
         help="Review timeout in seconds (default: 60.0).",
+    )
+    review_parser.add_argument(
+        "--load-dotenv",
+        action="store_true",
+        help="Explicitly load environment variables from .env in repository root.",
+    )
+    review_parser.add_argument(
+        "--env-file",
+        type=Path,
+        default=None,
+        help="Explicit path to environment file to load.",
     )
 
     return parser
@@ -326,28 +361,30 @@ def _load_candidates_from_file(candidates_path_arg: Path) -> list[ReviewFinding]
         sys.exit(1)
 
 
+def _resolve_review_provider(provider_arg: str | None, has_candidates: bool) -> str:
+    if provider_arg:
+        return provider_arg
+    if has_candidates:
+        return "none"
+    print(
+        "Error: Explicit provider selection is required (e.g. '--provider gemini', "
+        "'--provider deterministic') or provide candidate findings via "
+        "'--candidates <file>'.",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+
+
 def _execute_review(args: argparse.Namespace) -> None:
     candidates: list[ReviewFinding] = []
     if args.candidates:
         candidates = _load_candidates_from_file(args.candidates)
 
-    provider = args.provider
-    if not provider:
-        if candidates:
-            provider = "none"
-        else:
-            print(
-                "Error: Explicit provider selection is required (e.g. '--provider gemini', "
-                "'--provider deterministic') or provide candidate findings via "
-                "'--candidates <file>'.",
-                file=sys.stderr,
-            )
-            sys.exit(1)
+    provider = _resolve_review_provider(args.provider, bool(candidates))
 
-    if provider.lower() == "gemini":
+    if provider.lower() not in ("none", "model-free", "agent"):
         print(
-            "VerifyCraft: Remote provider 'gemini' selected. "
-            "Note: git diff and relevant surrounding code will be transmitted to the Gemini API.",
+            format_provider_disclosure(provider, model=args.model, base_url=args.base_url),
             file=sys.stderr,
         )
 
@@ -364,6 +401,8 @@ def _execute_review(args: argparse.Namespace) -> None:
         candidate_findings=candidates,
         provider=provider,
         model=args.model,
+        base_url=args.base_url,
+        allow_insecure_http=args.allow_insecure_http,
         policy=policy,
     )
 
@@ -398,6 +437,14 @@ def _execute_review(args: argparse.Namespace) -> None:
 def main(argv: Sequence[str] | None = None) -> None:
     parser = build_parser()
     args = parser.parse_args(argv if argv is not None else sys.argv[1:])
+
+    opt_in = (
+        bool(getattr(args, "load_dotenv", False))
+        or getattr(args, "env_file", None) is not None
+        or os.environ.get("VERIFYCRAFT_LOAD_DOTENV", "").strip().lower() in ("1", "true", "yes")
+    )
+    if opt_in:
+        load_dotenv_if_present(env_path=getattr(args, "env_file", None), opt_in=True)
 
     if not args.subcommand:
         parser.print_help()
