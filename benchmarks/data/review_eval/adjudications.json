@@ -1,0 +1,20 @@
+{
+  "version": "1.0.0",
+  "catalog_description": "Audited ground-truth adjudications for VerifyCraft review benchmark evaluations.",
+  "adjudications": [
+    {
+      "case_id": "dev_09_missing_edge_case_empty_collection",
+      "fingerprint": "dev09_keyerror_primary_id",
+      "file_path": "src/handlers/users.py",
+      "line": 4,
+      "subject": "Missing 'id' key raises KeyError",
+      "decision": "unsupported_claim",
+      "rationale": "get_lead_user_id(users: list[dict]) -> str accesses primary['id']. Claiming that caller dictionary records omit 'id' is an unsupported assumption about the input schema without code or contract evidence. In Variant B, this was correctly flagged as a non-blocking suggestion; upgrading it to a blocking defect claim in Variant C constitutes an unsupported claim / false positive under strict defect accounting.",
+      "evidence": "src/handlers/users.py:4: function contract extracts lead user id; no schema or caller evidence indicates user objects lack an 'id' attribute.",
+      "reviewer": "principal_evaluator",
+      "adjudicated_at": "2026-10-30T23:00:00Z",
+      "version": "1.0.0"
+    }
+  ]
+}
+

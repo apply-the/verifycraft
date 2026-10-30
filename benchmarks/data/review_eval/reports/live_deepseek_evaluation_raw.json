@@ -1,0 +1,3551 @@
+{
+  "evaluation_version": "2.0.0",
+  "execution_mode": "live",
+  "provider": "deepseek",
+  "live_gate_status": "COMPLETED",
+  "model_name": "deepseek-chat",
+  "split": "all",
+  "cases_count": 16,
+  "total_expected_defects": 10,
+  "token_accounting_type": "actual_api_usage",
+  "wall_time_seconds": 134.7209,
+  "variants": {
+    "variant_a": {
+      "variant_name": "variant_a",
+      "display_title": "Variant A (Direct Diff-Only)",
+      "total_cases": 16,
+      "expected_defects": 10,
+      "correct_findings": 8,
+      "defect_recall": 0.8,
+      "false_positives": 5,
+      "false_positives_clean": 1,
+      "actionable_precision": 0.6154,
+      "invalid_locations": 0,
+      "requirements_correct": 3,
+      "total_requirements": 7,
+      "requirements_accuracy": 0.4286,
+      "total_comments": 27,
+      "total_tokens": 14645,
+      "total_prompt_tokens": 7288,
+      "total_output_tokens": 7357,
+      "total_latency_seconds": 45.9519,
+      "estimated_cost_usd": 0.002754
+    },
+    "variant_b": {
+      "variant_name": "variant_b",
+      "display_title": "Variant B (Direct Context-Rich)",
+      "total_cases": 16,
+      "expected_defects": 10,
+      "correct_findings": 10,
+      "defect_recall": 1.0,
+      "false_positives": 3,
+      "false_positives_clean": 0,
+      "actionable_precision": 0.7692,
+      "invalid_locations": 0,
+      "requirements_correct": 3,
+      "total_requirements": 7,
+      "requirements_accuracy": 0.4286,
+      "total_comments": 26,
+      "total_tokens": 17148,
+      "total_prompt_tokens": 9907,
+      "total_output_tokens": 7241,
+      "total_latency_seconds": 44.2759,
+      "estimated_cost_usd": 0.002915
+    },
+    "variant_c": {
+      "variant_name": "variant_c",
+      "display_title": "Variant C (VerifyCraft)",
+      "total_cases": 16,
+      "expected_defects": 10,
+      "correct_findings": 9,
+      "defect_recall": 0.9,
+      "false_positives": 2,
+      "false_positives_clean": 0,
+      "actionable_precision": 0.8182,
+      "invalid_locations": 0,
+      "requirements_correct": 4,
+      "total_requirements": 7,
+      "requirements_accuracy": 0.5714,
+      "total_comments": 20,
+      "total_tokens": 16944,
+      "total_prompt_tokens": 9884,
+      "total_output_tokens": 7060,
+      "total_latency_seconds": 44.028,
+      "estimated_cost_usd": 0.002859
+    },
+    "variant_replay": {
+      "variant_name": "variant_replay",
+      "display_title": "Variant C-Replay (Replayed B)",
+      "total_cases": 16,
+      "expected_defects": 10,
+      "correct_findings": 10,
+      "defect_recall": 1.0,
+      "false_positives": 2,
+      "false_positives_clean": 0,
+      "actionable_precision": 0.8333,
+      "invalid_locations": 0,
+      "requirements_correct": 4,
+      "total_requirements": 7,
+      "requirements_accuracy": 0.5714,
+      "total_comments": 22,
+      "total_tokens": 17148,
+      "total_prompt_tokens": 9907,
+      "total_output_tokens": 7241,
+      "total_latency_seconds": 0.4523,
+      "estimated_cost_usd": 0.002915
+    }
+  },
+  "comparative_analysis": {
+    "context_enrichment_impact": {
+      "variant_a_recall": 0.8,
+      "variant_b_recall": 1.0,
+      "recall_delta": 0.2
+    },
+    "downstream_validation_impact": {
+      "variant_b_precision": 0.7692,
+      "variant_c_precision": 0.8182,
+      "precision_delta": 0.049,
+      "false_positives_prevented": 1,
+      "invalid_locations_eliminated": 0,
+      "requirements_accuracy_delta": 0.1428
+    },
+    "replay_pipeline_fidelity": {
+      "variant_b_candidates_evaluated": 26,
+      "replay_findings_retained": 22,
+      "replay_precision": 0.8333
+    }
+  },
+  "release_gate": {
+    "status": "FAILED_QUALITY_GATE",
+    "recommendation": "NO-GO (Quality Criteria Not Met: Actionable precision (81.8%) < 85.0% threshold; Recall regression: VerifyCraft (90.0%) < Direct Context (100.0%))",
+    "summary": "Live evaluation completed, but quality thresholds were not satisfied.",
+    "credentials_available": true,
+    "live_provider_call_completed": true,
+    "live_evaluation_completed": true,
+    "split_evaluated": "all",
+    "is_complete_evaluation": true,
+    "quality_criteria_passed": false,
+    "maintainer_approval_granted": false,
+    "quality_audit": {
+      "actionable_precision": 0.8182,
+      "actionable_precision_passed": false,
+      "defect_recall": 0.9,
+      "defect_recall_passed": true,
+      "invalid_locations": 0,
+      "invalid_locations_passed": true,
+      "value_add_over_baseline": false,
+      "failures": [
+        "Actionable precision (81.8%) < 85.0% threshold",
+        "Recall regression: VerifyCraft (90.0%) < Direct Context (100.0%)"
+      ]
+    }
+  },
+  "per_case_metrics": [
+    {
+      "case_id": "dev_01_req_violation_auth_expiry",
+      "name": "Requirement Violation: Token Expiration Check Omitted",
+      "split": "dev",
+      "category": "requirement_violation",
+      "expected_verdict": "has_defects",
+      "expected_defects_count": 1,
+      "total_requirements": 1,
+      "variant_a": {
+        "variant_name": "variant_a",
+        "correct_findings": 0,
+        "false_positives": 0,
+        "false_positives_clean": 0,
+        "invalid_locations": 0,
+        "requirements_correct": 1,
+        "total_requirements": 1,
+        "comments_count": 1,
+        "tokens_used": 809,
+        "prompt_tokens": 452,
+        "output_tokens": 357,
+        "latency_seconds": 2.7288,
+        "estimated_cost_usd": 0.000141,
+        "findings": [
+          {
+            "file_path": "src/auth/service.py",
+            "line": 8,
+            "end_line": null,
+            "label": "question",
+            "decorations": [
+              "non-blocking"
+            ],
+            "subject": "Expiration check relies on token.is_valid without explicit verification",
+            "description": "The new code returns token.is_valid but does not explicitly reject expired tokens. If is_valid does not include an expiry check, expired tokens could be accepted, violating REQ-AUTH-01. The diff does not show the implementation of is_valid.",
+            "severity": "medium",
+            "blocking": false,
+            "requirement_ids": [
+              "REQ-AUTH-01"
+            ],
+            "suggested_action": "Confirm that token.is_valid checks expiration, or add an explicit expiry check (e.g., token.expires_at > now) before returning true."
+          }
+        ],
+        "assessments": [
+          {
+            "requirement_id": "REQ-AUTH-01",
+            "status": "not_satisfied",
+            "explanation": "The diff adds a null check and returns token.is_valid, but there is no explicit rejection of expired tokens. Whether expiration is enforced depends on the unseen implementation of is_valid, so the requirement cannot be confirmed as satisfied from the provided change.",
+            "related_locations": [
+              "src/auth/service.py:8"
+            ]
+          }
+        ]
+      },
+      "variant_b": {
+        "variant_name": "variant_b",
+        "correct_findings": 1,
+        "false_positives": 0,
+        "false_positives_clean": 0,
+        "invalid_locations": 0,
+        "requirements_correct": 1,
+        "total_requirements": 1,
+        "comments_count": 1,
+        "tokens_used": 1109,
+        "prompt_tokens": 720,
+        "output_tokens": 389,
+        "latency_seconds": 2.0707,
+        "estimated_cost_usd": 0.000171,
+        "findings": [
+          {
+            "file_path": "src/auth/service.py",
+            "line": 10,
+            "end_line": null,
+            "label": "issue",
+            "decorations": [
+              "blocking",
+              "security"
+            ],
+            "subject": "Expired tokens are accepted because expiration is not checked",
+            "description": "The authenticate method returns token.is_valid without verifying token.expires_at against the current time. A token with is_valid=True but expires_at in the past (e.g., 100.0) will be accepted, allowing expired credentials to authenticate. This directly violates REQ-AUTH-01.",
+            "severity": "high",
+            "blocking": true,
+            "requirement_ids": [
+              "REQ-AUTH-01"
+            ],
+            "suggested_action": "Before returning token.is_valid, add a check such as `if token.expires_at < time.time(): return False` (or use a proper expiration comparison) to reject expired tokens."
+          }
+        ],
+        "assessments": [
+          {
+            "requirement_id": "REQ-AUTH-01",
+            "status": "not_satisfied",
+            "explanation": "The authenticate method does not check token.expires_at. The Token class exposes expires_at, and verify_signature can return a token with expires_at=100.0 (in the past). The code returns token.is_valid without any expiration comparison, so expired tokens are accepted.",
+            "related_locations": [
+              "src/auth/service.py:10",
+              "src/auth/tokens.py:3"
+            ]
+          }
+        ]
+      },
+      "variant_c": {
+        "variant_name": "variant_c",
+        "correct_findings": 0,
+        "false_positives": 1,
+        "false_positives_clean": 0,
+        "invalid_locations": 0,
+        "requirements_correct": 1,
+        "total_requirements": 1,
+        "comments_count": 1,
+        "tokens_used": 1079,
+        "prompt_tokens": 717,
+        "output_tokens": 362,
+        "latency_seconds": 2.396,
+        "estimated_cost_usd": 0.000162,
+        "findings": [
+          {
+            "id": "rev-001",
+            "file_path": "src/auth/service.py",
+            "line": 10,
+            "end_line": null,
+            "label": "issue",
+            "decorations": [
+              "blocking"
+            ],
+            "subject": "Expired tokens are accepted as valid",
+            "description": "authenticate returns token.is_valid without checking token.expires_at against the current time. Since verify_signature can return a Token with is_valid=True and an expires_at in the past, expired tokens will be accepted, violating REQ-AUTH-01 and allowing session issuance for expired credentials.",
+            "severity": "high",
+            "blocking": true,
+            "requirement_ids": [
+              "REQ-AUTH-01"
+            ],
+            "evidence_status": "model_inferred",
+            "review_status": "reported",
+            "suggested_action": "(Proposed remedy \u2014 model inferred): Before returning token.is_valid, check token.expires_at < time.time() and return False if the token is expired. For example: if token.expires_at < time.time(): return False; return token.is_valid.",
+            "dedup_key": null
+          }
+        ],
+        "assessments": [
+          {
+            "requirement_id": "REQ-AUTH-01",
+            "source_file": "inline",
+            "text": "User authentication must reject expired tokens before issuing a session.",
+            "status": "not_satisfied",
+            "explanation": "Requirement not satisfied: unresolved issue(s) identified (rev-001).",
+            "related_finding_ids": [
+              "rev-001"
+            ],
+            "related_locations": []
+          }
+        ]
+      },
+      "variant_replay": {
+        "variant_name": "variant_replay",
+        "correct_findings": 1,
+        "false_positives": 0,
+        "false_positives_clean": 0,
+        "invalid_locations": 0,
+        "requirements_correct": 1,
+        "total_requirements": 1,
+        "comments_count": 1,
+        "tokens_used": 1109,
+        "prompt_tokens": 720,
+        "output_tokens": 389,
+        "latency_seconds": 0.0224,
+        "estimated_cost_usd": 0.000171,
+        "findings": [
+          {
+            "id": "rev-001",
+            "file_path": "src/auth/service.py",
+            "line": 10,
+            "end_line": null,
+            "label": "issue",
+            "decorations": [
+              "blocking",
+              "security"
+            ],
+            "subject": "Expired tokens are accepted because expiration is not checked",
+            "description": "The authenticate method returns token.is_valid without verifying token.expires_at against the current time. A token with is_valid=True but expires_at in the past (e.g., 100.0) will be accepted, allowing expired credentials to authenticate. This directly violates REQ-AUTH-01.",
+            "severity": "high",
+            "blocking": true,
+            "requirement_ids": [
+              "REQ-AUTH-01"
+            ],
+            "evidence_status": "model_inferred",
+            "review_status": "reported",
+            "suggested_action": "(Proposed remedy \u2014 model inferred): Before returning token.is_valid, add a check such as `if token.expires_at < time.time(): return False` (or use a proper expiration comparison) to reject expired tokens.",
+            "dedup_key": null
+          }
+        ],
+        "assessments": [
+          {
+            "requirement_id": "REQ-AUTH-01",
+            "source_file": "inline",
+            "text": "User authentication must reject expired tokens before issuing a session.",
+            "status": "not_satisfied",
+            "explanation": "Requirement not satisfied: unresolved issue(s) identified (rev-001).",
+            "related_finding_ids": [
+              "rev-001"
+            ],
+            "related_locations": []
+          }
+        ]
+      }
+    },
+    {
+      "case_id": "dev_02_compensating_control_division",
+      "name": "Compensating Control: Guard Protects Division",
+      "split": "dev",
+      "category": "compensating_control",
+      "expected_verdict": "clean",
+      "expected_defects_count": 0,
+      "total_requirements": 1,
+      "variant_a": {
+        "variant_name": "variant_a",
+        "correct_findings": 0,
+        "false_positives": 0,
+        "false_positives_clean": 0,
+        "invalid_locations": 0,
+        "requirements_correct": 0,
+        "total_requirements": 1,
+        "comments_count": 2,
+        "tokens_used": 1018,
+        "prompt_tokens": 464,
+        "output_tokens": 554,
+        "latency_seconds": 3.2156,
+        "estimated_cost_usd": 0.000201,
+        "findings": [
+          {
+            "file_path": "src/analytics/metrics.py",
+            "line": 2,
+            "end_line": null,
+            "label": "suggestion",
+            "decorations": [
+              "non-blocking"
+            ],
+            "subject": "Zero-total guard returns 0.0 without distinguishing no-data from zero-error",
+            "description": "When `total == 0`, the function returns 0.0, which is indistinguishable from a genuine 0% error rate. Callers cannot tell whether there were no requests or whether all requests succeeded. This is acceptable for the stated requirement but may mask missing-data conditions in analytics reporting.",
+            "severity": "low",
+            "blocking": false,
+            "requirement_ids": [
+              "REQ-MATH-01"
+            ],
+            "suggested_action": "Consider documenting the zero-total semantics in a docstring, or returning `None`/raising a sentinel for no-data cases if callers need to distinguish them."
+          },
+          {
+            "file_path": "src/analytics/metrics.py",
+            "line": 4,
+            "end_line": null,
+            "label": "suggestion",
+            "decorations": [
+              "non-blocking"
+            ],
+            "subject": "No validation for negative inputs or errors exceeding total",
+            "description": "The function does not guard against negative `errors` or `total`, nor against `errors > total`, which would yield a rate above 1.0. These are caller-contract concerns but could produce misleading metrics if inputs are untrusted.",
+            "severity": "low",
+            "blocking": false,
+            "requirement_ids": [],
+            "suggested_action": "Optionally add input validation (e.g., assert errors >= 0 and total >= 0) or document the expected input contract."
+          }
+        ],
+        "assessments": [
+          {
+            "requirement_id": "REQ-MATH-01",
+            "status": "satisfied",
+            "explanation": "The added function explicitly checks `if total == 0: return 0.0` before performing division, preventing a ZeroDivisionError when there are zero total requests.",
+            "related_locations": [
+              "src/analytics/metrics.py:2"
+            ]
+          }
+        ]
+      },
+      "variant_b": {
+        "variant_name": "variant_b",
+        "correct_findings": 0,
+        "false_positives": 0,
+        "false_positives_clean": 0,
+        "invalid_locations": 0,
+        "requirements_correct": 0,
+        "total_requirements": 1,
+        "comments_count": 2,
+        "tokens_used": 1147,
+        "prompt_tokens": 578,
+        "output_tokens": 569,
+        "latency_seconds": 3.0556,
+        "estimated_cost_usd": 0.000214,
+        "findings": [
+          {
+            "file_path": "src/analytics/metrics.py",
+            "line": 1,
+            "end_line": null,
+            "label": "suggestion",
+            "decorations": [
+              "non-blocking"
+            ],
+            "subject": "No validation for negative or inconsistent inputs",
+            "description": "The function accepts any integers, including negative `errors` or `total`, and `errors > total`, which would produce nonsensical rates (e.g., negative or >1.0). The requirement only mandates zero-total handling, so this is not blocking, but callers could silently get invalid metrics.",
+            "severity": "low",
+            "blocking": false,
+            "requirement_ids": [],
+            "suggested_action": "Optionally validate that `errors >= 0`, `total >= 0`, and `errors <= total`, raising `ValueError` otherwise, or document the expected input contract."
+          },
+          {
+            "file_path": "src/analytics/metrics.py",
+            "line": 2,
+            "end_line": null,
+            "label": "suggestion",
+            "decorations": [
+              "non-blocking"
+            ],
+            "subject": "Zero-total returns 0.0 rather than signaling undefined rate",
+            "description": "Returning `0.0` for zero total avoids a crash as required, but conflates 'no requests' with 'no errors'. Downstream consumers may interpret 0.0 as a perfect error rate. This is a semantic choice worth confirming against the spec.",
+            "severity": "low",
+            "blocking": false,
+            "requirement_ids": [
+              "REQ-MATH-01"
+            ],
+            "suggested_action": "Confirm with the spec owner that 0.0 is the intended sentinel for zero total; otherwise consider returning `None` or documenting the behavior explicitly."
+          }
+        ],
+        "assessments": [
+          {
+            "requirement_id": "REQ-MATH-01",
+            "status": "satisfied",
+            "explanation": "The function explicitly checks `if total == 0: return 0.0` before performing division, preventing a ZeroDivisionError and thus handling zero total requests without crashing.",
+            "related_locations": [
+              "src/analytics/metrics.py:2",
+              "src/analytics/metrics.py:3"
+            ]
+          }
+        ]
+      },
+      "variant_c": {
+        "variant_name": "variant_c",
+        "correct_findings": 0,
+        "false_positives": 0,
+        "false_positives_clean": 0,
+        "invalid_locations": 0,
+        "requirements_correct": 0,
+        "total_requirements": 1,
+        "comments_count": 2,
+        "tokens_used": 1094,
+        "prompt_tokens": 574,
+        "output_tokens": 520,
+        "latency_seconds": 2.8228,
+        "estimated_cost_usd": 0.000199,
+        "findings": [
+          {
+            "id": "rev-001",
+            "file_path": "src/analytics/metrics.py",
+            "line": 4,
+            "end_line": null,
+            "label": "suggestion",
+            "decorations": [
+              "non-blocking"
+            ],
+            "subject": "No validation for negative inputs",
+            "description": "The function accepts negative `errors` or `total` values and returns a mathematically nonsensical rate (e.g., errors=-1, total=10 yields -0.1). Only the zero-total case is guarded.",
+            "severity": "low",
+            "blocking": false,
+            "requirement_ids": [],
+            "evidence_status": "model_inferred",
+            "review_status": "reported",
+            "suggested_action": "(Proposed remedy \u2014 model inferred): Validate that `errors` and `total` are non-negative (e.g., raise ValueError) or document the expected input domain.",
+            "dedup_key": null
+          },
+          {
+            "id": "rev-002",
+            "file_path": "src/analytics/metrics.py",
+            "line": 2,
+            "end_line": null,
+            "label": "suggestion",
+            "decorations": [
+              "non-blocking"
+            ],
+            "subject": "Zero-total return value is undocumented",
+            "description": "Returning 0.0 when total == 0 is a deliberate policy choice, but the function has no docstring explaining it. Callers may misinterpret 0.0 as 'no errors' rather than 'no data'.",
+            "severity": "low",
+            "blocking": false,
+            "requirement_ids": [
+              "REQ-MATH-01"
+            ],
+            "evidence_status": "model_inferred",
+            "review_status": "reported",
+            "suggested_action": "(Proposed remedy \u2014 model inferred): Add a docstring documenting the zero-total behavior and the meaning of the return value.",
+            "dedup_key": null
+          }
+        ],
+        "assessments": [
+          {
+            "requirement_id": "REQ-MATH-01",
+            "source_file": "inline",
+            "text": "Error rate calculation must handle zero total requests without crashing.",
+            "status": "unclear",
+            "explanation": "[Grounding: Model semantic inference | Citations: src/analytics/metrics.py:2, src/analytics/metrics.py:3] Lines 2-3 explicitly check `if total == 0` and return 0.0 before performing division, preventing a ZeroDivisionError when there are no total requests.",
+            "related_finding_ids": [
+              "rev-002"
+            ],
+            "related_locations": []
+          }
+        ]
+      },
+      "variant_replay": {
+        "variant_name": "variant_replay",
+        "correct_findings": 0,
+        "false_positives": 0,
+        "false_positives_clean": 0,
+        "invalid_locations": 0,
+        "requirements_correct": 0,
+        "total_requirements": 1,
+        "comments_count": 2,
+        "tokens_used": 1147,
+        "prompt_tokens": 578,
+        "output_tokens": 569,
+        "latency_seconds": 0.0222,
+        "estimated_cost_usd": 0.000214,
+        "findings": [
+          {
+            "id": "rev-001",
+            "file_path": "src/analytics/metrics.py",
+            "line": 1,
+            "end_line": null,
+            "label": "suggestion",
+            "decorations": [
+              "non-blocking"
+            ],
+            "subject": "No validation for negative or inconsistent inputs",
+            "description": "The function accepts any integers, including negative `errors` or `total`, and `errors > total`, which would produce nonsensical rates (e.g., negative or >1.0). The requirement only mandates zero-total handling, so this is not blocking, but callers could silently get invalid metrics.",
+            "severity": "low",
+            "blocking": false,
+            "requirement_ids": [],
+            "evidence_status": "model_inferred",
+            "review_status": "reported",
+            "suggested_action": "(Proposed remedy \u2014 model inferred): Optionally validate that `errors >= 0`, `total >= 0`, and `errors <= total`, raising `ValueError` otherwise, or document the expected input contract.",
+            "dedup_key": null
+          },
+          {
+            "id": "rev-002",
+            "file_path": "src/analytics/metrics.py",
+            "line": 2,
+            "end_line": null,
+            "label": "suggestion",
+            "decorations": [
+              "non-blocking"
+            ],
+            "subject": "Zero-total returns 0.0 rather than signaling undefined rate",
+            "description": "Returning `0.0` for zero total avoids a crash as required, but conflates 'no requests' with 'no errors'. Downstream consumers may interpret 0.0 as a perfect error rate. This is a semantic choice worth confirming against the spec.",
+            "severity": "low",
+            "blocking": false,
+            "requirement_ids": [
+              "REQ-MATH-01"
+            ],
+            "evidence_status": "model_inferred",
+            "review_status": "reported",
+            "suggested_action": "(Proposed remedy \u2014 model inferred): Confirm with the spec owner that 0.0 is the intended sentinel for zero total; otherwise consider returning `None` or documenting the behavior explicitly.",
+            "dedup_key": null
+          }
+        ],
+        "assessments": [
+          {
+            "requirement_id": "REQ-MATH-01",
+            "source_file": "inline",
+            "text": "Error rate calculation must handle zero total requests without crashing.",
+            "status": "unclear",
+            "explanation": "[Grounding: Model semantic inference | Citations: src/analytics/metrics.py:2, src/analytics/metrics.py:3] The function explicitly checks `if total == 0: return 0.0` before performing division, preventing a ZeroDivisionError and thus handling zero total requests without crashing.",
+            "related_finding_ids": [
+              "rev-002"
+            ],
+            "related_locations": []
+          }
+        ]
+      }
+    },
+    {
+      "case_id": "dev_03_logic_regression_off_by_one",
+      "name": "Logic Regression: Off-by-one in Pagination Slicing",
+      "split": "dev",
+      "category": "logic_regression",
+      "expected_verdict": "has_defects",
+      "expected_defects_count": 1,
+      "total_requirements": 0,
+      "variant_a": {
+        "variant_name": "variant_a",
+        "correct_findings": 1,
+        "false_positives": 0,
+        "false_positives_clean": 0,
+        "invalid_locations": 0,
+        "requirements_correct": 0,
+        "total_requirements": 0,
+        "comments_count": 1,
+        "tokens_used": 816,
+        "prompt_tokens": 458,
+        "output_tokens": 358,
+        "latency_seconds": 2.327,
+        "estimated_cost_usd": 0.000142,
+        "findings": [
+          {
+            "file_path": "src/utils/pagination.py",
+            "line": 5,
+            "end_line": null,
+            "label": "issue",
+            "decorations": [
+              "blocking",
+              "bug"
+            ],
+            "subject": "Off-by-one in pagination slice drops one item per page",
+            "description": "The slice end was changed from offset + page_size to offset + page_size - 1. As a result, each page returns at most page_size - 1 items. For page_size == 1, every page returns an empty list. For page_size > 1, the last item of each page is omitted, and since offset is still computed as (page - 1) * page_size, the omitted item is never returned on any page, silently losing data. Callers relying on full pages (e.g., UI grids, batch processing) will see short pages and missing records.",
+            "severity": "high",
+            "blocking": true,
+            "requirement_ids": [],
+            "suggested_action": "Revert the slice end to offset + page_size: `return list(items[offset : offset + page_size])`. If a different page size semantics is intended, adjust offset and page_size consistently and add tests covering page_size == 1, boundary pages, and last partial page."
+          }
+        ],
+        "assessments": []
+      },
+      "variant_b": {
+        "variant_name": "variant_b",
+        "correct_findings": 1,
+        "false_positives": 0,
+        "false_positives_clean": 0,
+        "invalid_locations": 0,
+        "requirements_correct": 0,
+        "total_requirements": 0,
+        "comments_count": 1,
+        "tokens_used": 870,
+        "prompt_tokens": 609,
+        "output_tokens": 261,
+        "latency_seconds": 1.9454,
+        "estimated_cost_usd": 0.000124,
+        "findings": [
+          {
+            "file_path": "src/utils/pagination.py",
+            "line": 6,
+            "end_line": null,
+            "label": "issue",
+            "decorations": [
+              "blocking"
+            ],
+            "subject": "Off-by-one slice drops the last item of each page",
+            "description": "The slice end is now offset + page_size - 1, so each page returns at most page_size - 1 items. For example, with page_size=10, page 1 returns items[0:9] (9 items) and the 10th item is never returned on any page, causing data loss and incorrect pagination results.",
+            "severity": "high",
+            "blocking": true,
+            "requirement_ids": [],
+            "suggested_action": "Revert the slice end to offset + page_size: return list(items[offset : offset + page_size])."
+          }
+        ],
+        "assessments": []
+      },
+      "variant_c": {
+        "variant_name": "variant_c",
+        "correct_findings": 1,
+        "false_positives": 0,
+        "false_positives_clean": 0,
+        "invalid_locations": 0,
+        "requirements_correct": 0,
+        "total_requirements": 0,
+        "comments_count": 1,
+        "tokens_used": 914,
+        "prompt_tokens": 609,
+        "output_tokens": 305,
+        "latency_seconds": 2.084,
+        "estimated_cost_usd": 0.000137,
+        "findings": [
+          {
+            "id": "rev-001",
+            "file_path": "src/utils/pagination.py",
+            "line": 6,
+            "end_line": null,
+            "label": "issue",
+            "decorations": [
+              "blocking",
+              "regression"
+            ],
+            "subject": "Pagination slice drops the last item of every page",
+            "description": "The slice end was changed from `offset + page_size` to `offset + page_size - 1`. For any page, this returns at most `page_size - 1` items, silently omitting the final item of each page. For example, with page_size=10, page 1 returns items 0..8 instead of 0..9. This breaks pagination correctness and causes data loss in consumers that rely on full pages.",
+            "severity": "high",
+            "blocking": true,
+            "requirement_ids": [],
+            "evidence_status": "model_inferred",
+            "review_status": "reported",
+            "suggested_action": "(Proposed remedy \u2014 model inferred): Revert the slice end to `offset + page_size`: `return list(items[offset : offset + page_size])`.",
+            "dedup_key": null
+          }
+        ],
+        "assessments": [
+          {
+            "requirement_id": "NONE",
+            "source_file": null,
+            "text": "No requirement document supplied.",
+            "status": "not_assessed",
+            "explanation": "No requirements document was supplied; standard code quality review was performed.",
+            "related_finding_ids": [],
+            "related_locations": []
+          }
+        ]
+      },
+      "variant_replay": {
+        "variant_name": "variant_replay",
+        "correct_findings": 1,
+        "false_positives": 0,
+        "false_positives_clean": 0,
+        "invalid_locations": 0,
+        "requirements_correct": 0,
+        "total_requirements": 0,
+        "comments_count": 1,
+        "tokens_used": 870,
+        "prompt_tokens": 609,
+        "output_tokens": 261,
+        "latency_seconds": 0.0268,
+        "estimated_cost_usd": 0.000124,
+        "findings": [
+          {
+            "id": "rev-001",
+            "file_path": "src/utils/pagination.py",
+            "line": 6,
+            "end_line": null,
+            "label": "issue",
+            "decorations": [
+              "blocking"
+            ],
+            "subject": "Off-by-one slice drops the last item of each page",
+            "description": "The slice end is now offset + page_size - 1, so each page returns at most page_size - 1 items. For example, with page_size=10, page 1 returns items[0:9] (9 items) and the 10th item is never returned on any page, causing data loss and incorrect pagination results.",
+            "severity": "high",
+            "blocking": true,
+            "requirement_ids": [],
+            "evidence_status": "model_inferred",
+            "review_status": "reported",
+            "suggested_action": "(Proposed remedy \u2014 model inferred): Revert the slice end to offset + page_size: return list(items[offset : offset + page_size]).",
+            "dedup_key": null
+          }
+        ],
+        "assessments": [
+          {
+            "requirement_id": "NONE",
+            "source_file": null,
+            "text": "No requirement document supplied.",
+            "status": "not_assessed",
+            "explanation": "No requirements document was supplied; standard code quality review was performed.",
+            "related_finding_ids": [],
+            "related_locations": []
+          }
+        ]
+      }
+    },
+    {
+      "case_id": "dev_04_clean_refactor",
+      "name": "Clean Refactor: Helper Extraction Without Semantic Change",
+      "split": "dev",
+      "category": "clean_change",
+      "expected_verdict": "clean",
+      "expected_defects_count": 0,
+      "total_requirements": 0,
+      "variant_a": {
+        "variant_name": "variant_a",
+        "correct_findings": 0,
+        "false_positives": 0,
+        "false_positives_clean": 0,
+        "invalid_locations": 0,
+        "requirements_correct": 0,
+        "total_requirements": 0,
+        "comments_count": 0,
+        "tokens_used": 534,
+        "prompt_tokens": 463,
+        "output_tokens": 71,
+        "latency_seconds": 0.8252,
+        "estimated_cost_usd": 5.6e-05,
+        "findings": [],
+        "assessments": []
+      },
+      "variant_b": {
+        "variant_name": "variant_b",
+        "correct_findings": 0,
+        "false_positives": 0,
+        "false_positives_clean": 0,
+        "invalid_locations": 0,
+        "requirements_correct": 0,
+        "total_requirements": 0,
+        "comments_count": 2,
+        "tokens_used": 1013,
+        "prompt_tokens": 582,
+        "output_tokens": 431,
+        "latency_seconds": 2.7621,
+        "estimated_cost_usd": 0.000173,
+        "findings": [
+          {
+            "file_path": "src/formatters/text.py",
+            "line": 5,
+            "end_line": null,
+            "label": "suggestion",
+            "decorations": [
+              "non-blocking"
+            ],
+            "subject": "Redundant strip() call in filter and helper",
+            "description": "The comprehension filters with `if t.strip()` and then calls `_clean_token(t)`, which calls `t.strip()` again. This is a minor inefficiency and duplicates the whitespace-trimming logic in two places. Behavior is unchanged, but the double strip is unnecessary.",
+            "severity": "low",
+            "blocking": false,
+            "requirement_ids": [],
+            "suggested_action": "Consider a single-pass approach, e.g. `cleaned = (_clean_token(t) for t in raw_tags); return [c for c in cleaned if c]`, or have `_clean_token` return the cleaned value and filter on the result."
+          },
+          {
+            "file_path": "src/formatters/text.py",
+            "line": 1,
+            "end_line": null,
+            "label": "praise",
+            "decorations": [
+              "non-blocking"
+            ],
+            "subject": "Good extraction of normalization logic",
+            "description": "Extracting `_clean_token` improves readability and makes the normalization rule reusable and testable in isolation. The refactor preserves the original semantics (strip, lowercase, drop empty entries).",
+            "severity": "low",
+            "blocking": false,
+            "requirement_ids": [],
+            "suggested_action": "No action required; consider adding a unit test for `_clean_token` and `format_tags` to lock in behavior."
+          }
+        ],
+        "assessments": []
+      },
+      "variant_c": {
+        "variant_name": "variant_c",
+        "correct_findings": 0,
+        "false_positives": 0,
+        "false_positives_clean": 0,
+        "invalid_locations": 0,
+        "requirements_correct": 0,
+        "total_requirements": 0,
+        "comments_count": 2,
+        "tokens_used": 1001,
+        "prompt_tokens": 582,
+        "output_tokens": 419,
+        "latency_seconds": 2.699,
+        "estimated_cost_usd": 0.000169,
+        "findings": [
+          {
+            "id": "rev-001",
+            "file_path": "src/formatters/text.py",
+            "line": 5,
+            "end_line": null,
+            "label": "suggestion",
+            "decorations": [
+              "non-blocking"
+            ],
+            "subject": "Avoid double strip() per token",
+            "description": "The comprehension calls `t.strip()` in the filter condition and then `_clean_token(t)` calls `t.strip()` again, so each token is stripped twice. This is harmless but slightly redundant work and duplicates the normalization logic across the filter and helper.",
+            "severity": "low",
+            "blocking": false,
+            "requirement_ids": [],
+            "evidence_status": "model_inferred",
+            "review_status": "reported",
+            "suggested_action": "(Proposed remedy \u2014 model inferred): Consider normalizing once, e.g. `cleaned = (_clean_token(t) for t in raw_tags)` then `return [t for t in cleaned if t]`, so the blank-token filter operates on the already-cleaned value.",
+            "dedup_key": null
+          },
+          {
+            "id": "rev-002",
+            "file_path": "src/formatters/text.py",
+            "line": 1,
+            "end_line": null,
+            "label": "praise",
+            "decorations": [
+              "non-blocking"
+            ],
+            "subject": "Good extraction of reusable normalization helper",
+            "description": "Extracting `_clean_token` makes the strip/lower normalization reusable and keeps `format_tags` readable. The refactor preserves the original semantics, including dropping empty tokens.",
+            "severity": "low",
+            "blocking": false,
+            "requirement_ids": [],
+            "evidence_status": "model_inferred",
+            "review_status": "reported",
+            "suggested_action": "(Proposed remedy \u2014 model inferred): No action needed; keep the helper private as done.",
+            "dedup_key": null
+          }
+        ],
+        "assessments": [
+          {
+            "requirement_id": "NONE",
+            "source_file": null,
+            "text": "No requirement document supplied.",
+            "status": "not_assessed",
+            "explanation": "No requirements document was supplied; standard code quality review was performed.",
+            "related_finding_ids": [],
+            "related_locations": []
+          }
+        ]
+      },
+      "variant_replay": {
+        "variant_name": "variant_replay",
+        "correct_findings": 0,
+        "false_positives": 0,
+        "false_positives_clean": 0,
+        "invalid_locations": 0,
+        "requirements_correct": 0,
+        "total_requirements": 0,
+        "comments_count": 2,
+        "tokens_used": 1013,
+        "prompt_tokens": 582,
+        "output_tokens": 431,
+        "latency_seconds": 0.0287,
+        "estimated_cost_usd": 0.000173,
+        "findings": [
+          {
+            "id": "rev-001",
+            "file_path": "src/formatters/text.py",
+            "line": 5,
+            "end_line": null,
+            "label": "suggestion",
+            "decorations": [
+              "non-blocking"
+            ],
+            "subject": "Redundant strip() call in filter and helper",
+            "description": "The comprehension filters with `if t.strip()` and then calls `_clean_token(t)`, which calls `t.strip()` again. This is a minor inefficiency and duplicates the whitespace-trimming logic in two places. Behavior is unchanged, but the double strip is unnecessary.",
+            "severity": "low",
+            "blocking": false,
+            "requirement_ids": [],
+            "evidence_status": "model_inferred",
+            "review_status": "reported",
+            "suggested_action": "(Proposed remedy \u2014 model inferred): Consider a single-pass approach, e.g. `cleaned = (_clean_token(t) for t in raw_tags); return [c for c in cleaned if c]`, or have `_clean_token` return the cleaned value and filter on the result.",
+            "dedup_key": null
+          },
+          {
+            "id": "rev-002",
+            "file_path": "src/formatters/text.py",
+            "line": 1,
+            "end_line": null,
+            "label": "praise",
+            "decorations": [
+              "non-blocking"
+            ],
+            "subject": "Good extraction of normalization logic",
+            "description": "Extracting `_clean_token` improves readability and makes the normalization rule reusable and testable in isolation. The refactor preserves the original semantics (strip, lowercase, drop empty entries).",
+            "severity": "low",
+            "blocking": false,
+            "requirement_ids": [],
+            "evidence_status": "model_inferred",
+            "review_status": "reported",
+            "suggested_action": "(Proposed remedy \u2014 model inferred): No action required; consider adding a unit test for `_clean_token` and `format_tags` to lock in behavior.",
+            "dedup_key": null
+          }
+        ],
+        "assessments": [
+          {
+            "requirement_id": "NONE",
+            "source_file": null,
+            "text": "No requirement document supplied.",
+            "status": "not_assessed",
+            "explanation": "No requirements document was supplied; standard code quality review was performed.",
+            "related_finding_ids": [],
+            "related_locations": []
+          }
+        ]
+      }
+    },
+    {
+      "case_id": "dev_05_ambiguous_requirement_timeout",
+      "name": "Ambiguous Requirement: Unverifiable 'Reasonably Fast' SLA",
+      "split": "dev",
+      "category": "ambiguous_requirement",
+      "expected_verdict": "unclear",
+      "expected_defects_count": 0,
+      "total_requirements": 1,
+      "variant_a": {
+        "variant_name": "variant_a",
+        "correct_findings": 0,
+        "false_positives": 0,
+        "false_positives_clean": 0,
+        "invalid_locations": 0,
+        "requirements_correct": 0,
+        "total_requirements": 1,
+        "comments_count": 1,
+        "tokens_used": 815,
+        "prompt_tokens": 464,
+        "output_tokens": 351,
+        "latency_seconds": 2.161,
+        "estimated_cost_usd": 0.00014,
+        "findings": [
+          {
+            "file_path": "src/api/client.py",
+            "line": 3,
+            "end_line": null,
+            "label": "suggestion",
+            "decorations": [
+              "non-blocking"
+            ],
+            "subject": "Consider making the timeout configurable",
+            "description": "The hardcoded 10.0-second timeout satisfies the requirement but may be too rigid for different environments or endpoints. A configurable timeout (e.g., via parameter or settings) would improve flexibility without affecting the current behavior.",
+            "severity": "low",
+            "blocking": false,
+            "requirement_ids": [
+              "REQ-PERF-01"
+            ],
+            "suggested_action": "Optionally accept a timeout parameter with a default of 10.0, or read from configuration, to allow callers to adjust the timeout as needed."
+          }
+        ],
+        "assessments": [
+          {
+            "requirement_id": "REQ-PERF-01",
+            "status": "satisfied",
+            "explanation": "The added timeout=10.0 to requests.get ensures the network call will not block indefinitely, bounding the wait time to 10 seconds. This meets the requirement for reasonably fast, non-indefinite blocking network catalog calls.",
+            "related_locations": [
+              "src/api/client.py:3"
+            ]
+          }
+        ]
+      },
+      "variant_b": {
+        "variant_name": "variant_b",
+        "correct_findings": 0,
+        "false_positives": 0,
+        "false_positives_clean": 0,
+        "invalid_locations": 0,
+        "requirements_correct": 0,
+        "total_requirements": 1,
+        "comments_count": 1,
+        "tokens_used": 903,
+        "prompt_tokens": 586,
+        "output_tokens": 317,
+        "latency_seconds": 2.4163,
+        "estimated_cost_usd": 0.000139,
+        "findings": [
+          {
+            "file_path": "src/api/client.py",
+            "line": 4,
+            "end_line": null,
+            "label": "praise",
+            "decorations": [],
+            "subject": "Added timeout prevents indefinite blocking",
+            "description": "The requests.get call now specifies timeout=10.0, ensuring the catalog fetch cannot hang indefinitely. This satisfies the SLA requirement for reasonably fast, non-blocking network calls.",
+            "severity": "low",
+            "blocking": false,
+            "requirement_ids": [
+              "REQ-PERF-01"
+            ],
+            "suggested_action": "No action needed; consider making the timeout configurable if different endpoints have varying latency profiles."
+          }
+        ],
+        "assessments": [
+          {
+            "requirement_id": "REQ-PERF-01",
+            "status": "satisfied",
+            "explanation": "The diff adds timeout=10.0 to requests.get in fetch_remote_catalog (src/api/client.py:4), bounding the network call duration and preventing indefinite blocking, consistent with the SLA requirement.",
+            "related_locations": [
+              "src/api/client.py:4"
+            ]
+          }
+        ]
+      },
+      "variant_c": {
+        "variant_name": "variant_c",
+        "correct_findings": 0,
+        "false_positives": 0,
+        "false_positives_clean": 0,
+        "invalid_locations": 0,
+        "requirements_correct": 1,
+        "total_requirements": 1,
+        "comments_count": 1,
+        "tokens_used": 885,
+        "prompt_tokens": 583,
+        "output_tokens": 302,
+        "latency_seconds": 2.1511,
+        "estimated_cost_usd": 0.000134,
+        "findings": [
+          {
+            "id": "rev-001",
+            "file_path": "src/api/client.py",
+            "line": 4,
+            "end_line": null,
+            "label": "praise",
+            "decorations": [
+              "improvement"
+            ],
+            "subject": "Added timeout prevents indefinite blocking",
+            "description": "The requests.get call now specifies timeout=10.0, ensuring the network catalog call cannot block indefinitely. This satisfies REQ-PERF-01 and improves reliability.",
+            "severity": "low",
+            "blocking": false,
+            "requirement_ids": [
+              "REQ-PERF-01"
+            ],
+            "evidence_status": "model_inferred",
+            "review_status": "reported",
+            "suggested_action": "(Proposed remedy \u2014 model inferred): No action needed; consider making the timeout configurable if different environments require different values.",
+            "dedup_key": null
+          }
+        ],
+        "assessments": [
+          {
+            "requirement_id": "REQ-PERF-01",
+            "source_file": "inline",
+            "text": "Network catalog calls should be reasonably fast and not block indefinitely.",
+            "status": "unclear",
+            "explanation": "[Grounding: Model semantic inference | Citations: src/api/client.py:4] The fetch_remote_catalog function now passes timeout=10.0 to requests.get, bounding the call duration and preventing indefinite blocking, as required.",
+            "related_finding_ids": [
+              "rev-001"
+            ],
+            "related_locations": []
+          }
+        ]
+      },
+      "variant_replay": {
+        "variant_name": "variant_replay",
+        "correct_findings": 0,
+        "false_positives": 0,
+        "false_positives_clean": 0,
+        "invalid_locations": 0,
+        "requirements_correct": 1,
+        "total_requirements": 1,
+        "comments_count": 1,
+        "tokens_used": 903,
+        "prompt_tokens": 586,
+        "output_tokens": 317,
+        "latency_seconds": 0.0241,
+        "estimated_cost_usd": 0.000139,
+        "findings": [
+          {
+            "id": "rev-001",
+            "file_path": "src/api/client.py",
+            "line": 4,
+            "end_line": null,
+            "label": "praise",
+            "decorations": [],
+            "subject": "Added timeout prevents indefinite blocking",
+            "description": "The requests.get call now specifies timeout=10.0, ensuring the catalog fetch cannot hang indefinitely. This satisfies the SLA requirement for reasonably fast, non-blocking network calls.",
+            "severity": "low",
+            "blocking": false,
+            "requirement_ids": [
+              "REQ-PERF-01"
+            ],
+            "evidence_status": "model_inferred",
+            "review_status": "reported",
+            "suggested_action": "(Proposed remedy \u2014 model inferred): No action needed; consider making the timeout configurable if different endpoints have varying latency profiles.",
+            "dedup_key": null
+          }
+        ],
+        "assessments": [
+          {
+            "requirement_id": "REQ-PERF-01",
+            "source_file": "inline",
+            "text": "Network catalog calls should be reasonably fast and not block indefinitely.",
+            "status": "unclear",
+            "explanation": "[Grounding: Model semantic inference | Citations: src/api/client.py:4] The diff adds timeout=10.0 to requests.get in fetch_remote_catalog (src/api/client.py:4), bounding the network call duration and preventing indefinite blocking, consistent with the SLA requirement.",
+            "related_finding_ids": [
+              "rev-001"
+            ],
+            "related_locations": []
+          }
+        ]
+      }
+    },
+    {
+      "case_id": "dev_06_security_timing_attack",
+      "name": "Security Defect: Non-Constant-Time Secret Comparison",
+      "split": "dev",
+      "category": "security_sensitive",
+      "expected_verdict": "has_defects",
+      "expected_defects_count": 1,
+      "total_requirements": 1,
+      "variant_a": {
+        "variant_name": "variant_a",
+        "correct_findings": 1,
+        "false_positives": 0,
+        "false_positives_clean": 0,
+        "invalid_locations": 0,
+        "requirements_correct": 1,
+        "total_requirements": 1,
+        "comments_count": 1,
+        "tokens_used": 895,
+        "prompt_tokens": 484,
+        "output_tokens": 411,
+        "latency_seconds": 2.7445,
+        "estimated_cost_usd": 0.00016,
+        "findings": [
+          {
+            "file_path": "src/crypto/signatures.py",
+            "line": 4,
+            "end_line": null,
+            "label": "issue",
+            "decorations": [
+              "blocking",
+              "security"
+            ],
+            "subject": "Non-constant-time signature comparison enables timing attacks",
+            "description": "The computed HMAC digest is compared to the attacker-supplied `expected_sig` using Python's `==` operator. String equality short-circuits on the first mismatched byte, so comparison time varies with the number of matching leading bytes. An attacker who can submit many webhook requests and measure response timing can recover a valid signature byte-by-byte, bypassing signature validation.",
+            "severity": "high",
+            "blocking": true,
+            "requirement_ids": [
+              "REQ-SEC-01"
+            ],
+            "suggested_action": "Use `hmac.compare_digest(computed, expected_sig)` for the comparison. Also consider validating that `expected_sig` is a well-formed hex string of the expected length before comparing."
+          }
+        ],
+        "assessments": [
+          {
+            "requirement_id": "REQ-SEC-01",
+            "status": "not_satisfied",
+            "explanation": "The new code compares the computed HMAC hexdigest to the expected signature with the `==` operator, which is not constant-time and leaks timing information about matching prefix bytes. The requirement mandates constant-time comparison, e.g., via `hmac.compare_digest`.",
+            "related_locations": [
+              "src/crypto/signatures.py:4"
+            ]
+          }
+        ]
+      },
+      "variant_b": {
+        "variant_name": "variant_b",
+        "correct_findings": 1,
+        "false_positives": 0,
+        "false_positives_clean": 0,
+        "invalid_locations": 0,
+        "requirements_correct": 1,
+        "total_requirements": 1,
+        "comments_count": 1,
+        "tokens_used": 1100,
+        "prompt_tokens": 661,
+        "output_tokens": 439,
+        "latency_seconds": 2.9393,
+        "estimated_cost_usd": 0.000181,
+        "findings": [
+          {
+            "file_path": "src/crypto/signatures.py",
+            "line": 6,
+            "end_line": null,
+            "label": "issue",
+            "decorations": [
+              "blocking",
+              "security"
+            ],
+            "subject": "Non-constant-time signature comparison enables timing attacks",
+            "description": "The computed HMAC digest is compared to expected_sig using the == operator. Python's string equality short-circuits on the first differing byte, so comparison time depends on how many leading bytes match. An attacker who can measure response timing can incrementally guess the correct signature byte-by-byte, potentially forging valid webhook signatures. This directly violates REQ-SEC-01.",
+            "severity": "high",
+            "blocking": true,
+            "requirement_ids": [
+              "REQ-SEC-01"
+            ],
+            "suggested_action": "Use hmac.compare_digest(computed, expected_sig) for constant-time comparison. Consider also normalizing/validating expected_sig format and ensuring both operands are bytes or ASCII strings as required by compare_digest."
+          }
+        ],
+        "assessments": [
+          {
+            "requirement_id": "REQ-SEC-01",
+            "status": "not_satisfied",
+            "explanation": "REQ-SEC-01 mandates constant-time comparison for cryptographic signature validation. The implementation at src/crypto/signatures.py:6 uses the == operator, which is not constant-time and is explicitly flagged by the inline comment as susceptible to timing side-channel attacks. The hmac module is already imported, so hmac.compare_digest is readily available.",
+            "related_locations": [
+              "src/crypto/signatures.py:6"
+            ]
+          }
+        ]
+      },
+      "variant_c": {
+        "variant_name": "variant_c",
+        "correct_findings": 1,
+        "false_positives": 0,
+        "false_positives_clean": 0,
+        "invalid_locations": 0,
+        "requirements_correct": 1,
+        "total_requirements": 1,
+        "comments_count": 1,
+        "tokens_used": 1098,
+        "prompt_tokens": 658,
+        "output_tokens": 440,
+        "latency_seconds": 2.6812,
+        "estimated_cost_usd": 0.000181,
+        "findings": [
+          {
+            "id": "rev-001",
+            "file_path": "src/crypto/signatures.py",
+            "line": 6,
+            "end_line": null,
+            "label": "issue",
+            "decorations": [
+              "blocking",
+              "security"
+            ],
+            "subject": "Non-constant-time signature comparison enables timing attacks",
+            "description": "The computed HMAC digest is compared to expected_sig using the == operator. Python's string equality short-circuits on the first differing byte, so comparison time depends on how many leading bytes match. An attacker who can measure response timing can incrementally guess the correct signature byte-by-byte, potentially forging valid webhook signatures. The inline comment on line 6 already flags this as a security bug.",
+            "severity": "high",
+            "blocking": true,
+            "requirement_ids": [
+              "REQ-SEC-01"
+            ],
+            "evidence_status": "model_inferred",
+            "review_status": "reported",
+            "suggested_action": "(Proposed remedy \u2014 model inferred): Use hmac.compare_digest(computed, expected_sig) for constant-time comparison. Also consider normalizing expected_sig (e.g., stripping a 'sha256=' prefix if applicable) and handling non-hex or wrong-length inputs safely before comparison.",
+            "dedup_key": null
+          }
+        ],
+        "assessments": [
+          {
+            "requirement_id": "REQ-SEC-01",
+            "source_file": "inline",
+            "text": "Cryptographic signature validation must use constant-time comparison to prevent timing attacks.",
+            "status": "not_satisfied",
+            "explanation": "Requirement not satisfied: unresolved issue(s) identified (rev-001).",
+            "related_finding_ids": [
+              "rev-001"
+            ],
+            "related_locations": []
+          }
+        ]
+      },
+      "variant_replay": {
+        "variant_name": "variant_replay",
+        "correct_findings": 1,
+        "false_positives": 0,
+        "false_positives_clean": 0,
+        "invalid_locations": 0,
+        "requirements_correct": 1,
+        "total_requirements": 1,
+        "comments_count": 1,
+        "tokens_used": 1100,
+        "prompt_tokens": 661,
+        "output_tokens": 439,
+        "latency_seconds": 0.0306,
+        "estimated_cost_usd": 0.000181,
+        "findings": [
+          {
+            "id": "rev-001",
+            "file_path": "src/crypto/signatures.py",
+            "line": 6,
+            "end_line": null,
+            "label": "issue",
+            "decorations": [
+              "blocking",
+              "security"
+            ],
+            "subject": "Non-constant-time signature comparison enables timing attacks",
+            "description": "The computed HMAC digest is compared to expected_sig using the == operator. Python's string equality short-circuits on the first differing byte, so comparison time depends on how many leading bytes match. An attacker who can measure response timing can incrementally guess the correct signature byte-by-byte, potentially forging valid webhook signatures. This directly violates REQ-SEC-01.",
+            "severity": "high",
+            "blocking": true,
+            "requirement_ids": [
+              "REQ-SEC-01"
+            ],
+            "evidence_status": "model_inferred",
+            "review_status": "reported",
+            "suggested_action": "(Proposed remedy \u2014 model inferred): Use hmac.compare_digest(computed, expected_sig) for constant-time comparison. Consider also normalizing/validating expected_sig format and ensuring both operands are bytes or ASCII strings as required by compare_digest.",
+            "dedup_key": null
+          }
+        ],
+        "assessments": [
+          {
+            "requirement_id": "REQ-SEC-01",
+            "source_file": "inline",
+            "text": "Cryptographic signature validation must use constant-time comparison to prevent timing attacks.",
+            "status": "not_satisfied",
+            "explanation": "Requirement not satisfied: unresolved issue(s) identified (rev-001).",
+            "related_finding_ids": [
+              "rev-001"
+            ],
+            "related_locations": []
+          }
+        ]
+      }
+    },
+    {
+      "case_id": "dev_07_api_compatibility_signature_break",
+      "name": "API Compatibility: Breaking Positional Parameter Addition",
+      "split": "dev",
+      "category": "api_compatibility",
+      "expected_verdict": "has_defects",
+      "expected_defects_count": 1,
+      "total_requirements": 0,
+      "variant_a": {
+        "variant_name": "variant_a",
+        "correct_findings": 1,
+        "false_positives": 2,
+        "false_positives_clean": 0,
+        "invalid_locations": 0,
+        "requirements_correct": 0,
+        "total_requirements": 0,
+        "comments_count": 4,
+        "tokens_used": 1280,
+        "prompt_tokens": 455,
+        "output_tokens": 825,
+        "latency_seconds": 4.6861,
+        "estimated_cost_usd": 0.000282,
+        "findings": [
+          {
+            "file_path": "src/api/export.py",
+            "line": 3,
+            "end_line": null,
+            "label": "issue",
+            "decorations": [
+              "blocking"
+            ],
+            "subject": "format parameter is ignored; output is not valid CSV",
+            "description": "The function accepts a format parameter defaulting to 'csv' but never uses it. Writing str(data) produces a Python repr of the list (e.g., \"[1, 2, 3]\") rather than CSV rows. Any caller expecting CSV output will receive malformed data.",
+            "severity": "high",
+            "blocking": true,
+            "requirement_ids": [],
+            "suggested_action": "Use the csv module (or appropriate serializer based on format) to write proper output, e.g., csv.writer(f).writerows(data) for CSV, and branch on format for other formats."
+          },
+          {
+            "file_path": "src/api/export.py",
+            "line": 3,
+            "end_line": null,
+            "label": "issue",
+            "decorations": [
+              "blocking"
+            ],
+            "subject": "No error handling; return value is always True on success and never False",
+            "description": "The function signature now returns bool, but the body has no try/except and no explicit return statement. If open or write raises (e.g., permission denied, disk full), the exception propagates and no bool is returned. On success, the function implicitly returns None, not True, violating the declared return type.",
+            "severity": "high",
+            "blocking": true,
+            "requirement_ids": [],
+            "suggested_action": "Wrap file operations in try/except, return True on success and False on failure, or remove the bool return type and let exceptions propagate. Ensure all code paths return a bool."
+          },
+          {
+            "file_path": "src/api/export.py",
+            "line": 2,
+            "end_line": null,
+            "label": "issue",
+            "decorations": [
+              "blocking"
+            ],
+            "subject": "Breaking signature change: destination is now required and return type changed",
+            "description": "Adding a required positional parameter destination and changing the return type from str to bool breaks all existing callers of export_data. Callers that previously received a string will now get None or an exception, and callers not passing destination will raise TypeError.",
+            "severity": "high",
+            "blocking": true,
+            "requirement_ids": [],
+            "suggested_action": "Either preserve backward compatibility by making destination optional and returning the serialized string when not provided, or update all call sites and document the breaking change. Consider a new function name for the file-writing variant."
+          },
+          {
+            "file_path": "src/api/export.py",
+            "line": 3,
+            "end_line": null,
+            "label": "suggestion",
+            "decorations": [],
+            "subject": "Use context manager with explicit encoding and newline handling",
+            "description": "open(destination, 'w') uses the platform default encoding and does not specify newline='' which is recommended for CSV writing to avoid extra blank lines on Windows. Explicit encoding improves portability.",
+            "severity": "medium",
+            "blocking": false,
+            "requirement_ids": [],
+            "suggested_action": "Open with open(destination, 'w', newline='', encoding='utf-8') when writing CSV."
+          }
+        ],
+        "assessments": []
+      },
+      "variant_b": {
+        "variant_name": "variant_b",
+        "correct_findings": 1,
+        "false_positives": 2,
+        "false_positives_clean": 0,
+        "invalid_locations": 0,
+        "requirements_correct": 0,
+        "total_requirements": 0,
+        "comments_count": 4,
+        "tokens_used": 1445,
+        "prompt_tokens": 609,
+        "output_tokens": 836,
+        "latency_seconds": 4.614,
+        "estimated_cost_usd": 0.000296,
+        "findings": [
+          {
+            "file_path": "src/api/export.py",
+            "line": 4,
+            "end_line": null,
+            "label": "issue",
+            "decorations": [
+              "blocking"
+            ],
+            "subject": "Breaking change: destination is now a required positional argument",
+            "description": "The previous signature `export_data(data, format='csv') -> str` has been changed to `export_data(data, destination, format='csv') -> bool`. Existing callers that pass only `data` or use the old return value will fail with a TypeError or behave incorrectly. The inline comment on line 3 acknowledges this is a breaking change.",
+            "severity": "high",
+            "blocking": true,
+            "requirement_ids": [],
+            "suggested_action": "Either preserve backward compatibility by making `destination` optional with a default, or introduce a new function/version and deprecate the old one. Update all call sites and document the migration."
+          },
+          {
+            "file_path": "src/api/export.py",
+            "line": 6,
+            "end_line": null,
+            "label": "issue",
+            "decorations": [
+              "blocking"
+            ],
+            "subject": "format parameter is ignored; output is not CSV",
+            "description": "The function accepts `format: str = 'csv'` but never uses it. It writes `str(data)` directly, which produces a Python list repr (e.g. \"[1, 2, 3]\") rather than CSV or any other requested format. Callers requesting CSV will receive invalid output.",
+            "severity": "high",
+            "blocking": true,
+            "requirement_ids": [],
+            "suggested_action": "Implement format-specific serialization (e.g., use the `csv` module for CSV, `json.dump` for JSON) and validate or reject unsupported formats."
+          },
+          {
+            "file_path": "src/api/export.py",
+            "line": 5,
+            "end_line": null,
+            "label": "issue",
+            "decorations": [
+              "blocking"
+            ],
+            "subject": "File opened without encoding and no error handling",
+            "description": "`open(destination, 'w')` uses the platform default encoding, which can cause inconsistent output across environments. Additionally, there is no handling for I/O errors (e.g., permission denied, missing directory), so failures propagate as raw exceptions. The function always returns `True`, even if writing partially fails.",
+            "severity": "medium",
+            "blocking": false,
+            "requirement_ids": [],
+            "suggested_action": "Specify an explicit encoding (e.g., `encoding='utf-8'`), wrap the write in a try/except to handle OSError, and return a meaningful boolean or raise a domain-specific exception."
+          },
+          {
+            "file_path": "src/api/export.py",
+            "line": 4,
+            "end_line": null,
+            "label": "suggestion",
+            "decorations": [],
+            "subject": "Return type changed from str to bool without documentation",
+            "description": "The return type changed from `str` to `bool`, but the function now returns `True` unconditionally. This is not informative and may mislead callers into thinking success/failure is being reported.",
+            "severity": "low",
+            "blocking": false,
+            "requirement_ids": [],
+            "suggested_action": "Either return the written path/content as before, or return a boolean that reflects actual success/failure based on exception handling."
+          }
+        ],
+        "assessments": []
+      },
+      "variant_c": {
+        "variant_name": "variant_c",
+        "correct_findings": 1,
+        "false_positives": 0,
+        "false_positives_clean": 0,
+        "invalid_locations": 0,
+        "requirements_correct": 0,
+        "total_requirements": 0,
+        "comments_count": 1,
+        "tokens_used": 1506,
+        "prompt_tokens": 609,
+        "output_tokens": 897,
+        "latency_seconds": 4.8138,
+        "estimated_cost_usd": 0.000315,
+        "findings": [
+          {
+            "id": "rev-001",
+            "file_path": "src/api/export.py",
+            "line": 4,
+            "end_line": null,
+            "label": "issue",
+            "decorations": [
+              "blocking"
+            ],
+            "subject": "Breaking change: new required positional argument `destination`",
+            "description": "`export_data` previously accepted only `data` and an optional `format`, returning a string. It now requires a `destination` positional argument and returns `bool`. Any existing caller invoking `export_data(data)` or `export_data(data, format='json')` will raise `TypeError` at runtime. The inline comment on line 3 acknowledges this breaking change but no migration path or default is provided.\n\n*(Related perspective [issue]: `format` parameter is ignored; data written as raw `str(data)`)*\n\n*(Related perspective [issue]: File opened without encoding and without error handling)*\n\n*(Related perspective [suggestion]: Return type changed from `str` to `bool` without rationale)*",
+            "severity": "high",
+            "blocking": true,
+            "requirement_ids": [],
+            "evidence_status": "model_inferred",
+            "review_status": "reported",
+            "suggested_action": "(Proposed remedy \u2014 model inferred): Either preserve backward compatibility by making `destination` optional (e.g., `destination: str | None = None`) and returning the serialized string when omitted, or update all call sites and document the breaking change in the changelog/version bump.",
+            "dedup_key": null
+          }
+        ],
+        "assessments": [
+          {
+            "requirement_id": "NONE",
+            "source_file": null,
+            "text": "No requirement document supplied.",
+            "status": "not_assessed",
+            "explanation": "No requirements document was supplied; standard code quality review was performed.",
+            "related_finding_ids": [],
+            "related_locations": []
+          }
+        ]
+      },
+      "variant_replay": {
+        "variant_name": "variant_replay",
+        "correct_findings": 1,
+        "false_positives": 1,
+        "false_positives_clean": 0,
+        "invalid_locations": 0,
+        "requirements_correct": 0,
+        "total_requirements": 0,
+        "comments_count": 2,
+        "tokens_used": 1445,
+        "prompt_tokens": 609,
+        "output_tokens": 836,
+        "latency_seconds": 0.0251,
+        "estimated_cost_usd": 0.000296,
+        "findings": [
+          {
+            "id": "rev-001",
+            "file_path": "src/api/export.py",
+            "line": 4,
+            "end_line": null,
+            "label": "issue",
+            "decorations": [
+              "blocking"
+            ],
+            "subject": "Breaking change: destination is now a required positional argument",
+            "description": "The previous signature `export_data(data, format='csv') -> str` has been changed to `export_data(data, destination, format='csv') -> bool`. Existing callers that pass only `data` or use the old return value will fail with a TypeError or behave incorrectly. The inline comment on line 3 acknowledges this is a breaking change.\n\n*(Related perspective [issue]: format parameter is ignored; output is not CSV)*",
+            "severity": "high",
+            "blocking": true,
+            "requirement_ids": [],
+            "evidence_status": "model_inferred",
+            "review_status": "reported",
+            "suggested_action": "(Proposed remedy \u2014 model inferred): Either preserve backward compatibility by making `destination` optional with a default, or introduce a new function/version and deprecate the old one. Update all call sites and document the migration.",
+            "dedup_key": null
+          },
+          {
+            "id": "rev-003",
+            "file_path": "src/api/export.py",
+            "line": 5,
+            "end_line": null,
+            "label": "issue",
+            "decorations": [
+              "blocking"
+            ],
+            "subject": "File opened without encoding and no error handling",
+            "description": "`open(destination, 'w')` uses the platform default encoding, which can cause inconsistent output across environments. Additionally, there is no handling for I/O errors (e.g., permission denied, missing directory), so failures propagate as raw exceptions. The function always returns `True`, even if writing partially fails.\n\n*(Related perspective [suggestion]: Return type changed from str to bool without documentation)*",
+            "severity": "medium",
+            "blocking": false,
+            "requirement_ids": [],
+            "evidence_status": "model_inferred",
+            "review_status": "reported",
+            "suggested_action": "(Proposed remedy \u2014 model inferred): Specify an explicit encoding (e.g., `encoding='utf-8'`), wrap the write in a try/except to handle OSError, and return a meaningful boolean or raise a domain-specific exception.",
+            "dedup_key": null
+          }
+        ],
+        "assessments": [
+          {
+            "requirement_id": "NONE",
+            "source_file": null,
+            "text": "No requirement document supplied.",
+            "status": "not_assessed",
+            "explanation": "No requirements document was supplied; standard code quality review was performed.",
+            "related_finding_ids": [],
+            "related_locations": []
+          }
+        ]
+      }
+    },
+    {
+      "case_id": "dev_08_multi_file_missing_import_call",
+      "name": "Multi-File Context: Caller Uses Renamed Helper Method",
+      "split": "dev",
+      "category": "multi_file_context",
+      "expected_verdict": "has_defects",
+      "expected_defects_count": 1,
+      "total_requirements": 0,
+      "variant_a": {
+        "variant_name": "variant_a",
+        "correct_findings": 0,
+        "false_positives": 1,
+        "false_positives_clean": 0,
+        "invalid_locations": 0,
+        "requirements_correct": 0,
+        "total_requirements": 0,
+        "comments_count": 2,
+        "tokens_used": 861,
+        "prompt_tokens": 436,
+        "output_tokens": 425,
+        "latency_seconds": 2.5528,
+        "estimated_cost_usd": 0.00016,
+        "findings": [
+          {
+            "file_path": "src/orders/processor.py",
+            "line": 3,
+            "end_line": null,
+            "label": "question",
+            "decorations": [
+              "blocking"
+            ],
+            "subject": "format_order_summary is not defined or imported in the diff",
+            "description": "process_order now calls format_order_summary(order_id, items), but the diff provides no definition, import, or reference for this function. If it is not defined or imported elsewhere in the module, this will raise a NameError at runtime for every call to process_order.",
+            "severity": "high",
+            "blocking": true,
+            "requirement_ids": [],
+            "suggested_action": "Confirm format_order_summary is defined or imported in src/orders/processor.py (or its dependencies) and add the import if missing; otherwise include its implementation in this change."
+          },
+          {
+            "file_path": "src/orders/processor.py",
+            "line": 3,
+            "end_line": null,
+            "label": "question",
+            "decorations": [],
+            "subject": "Behavior change in return value is unverified",
+            "description": "The previous implementation returned a fixed string 'Order {order_id}'. The new implementation delegates to format_order_summary, whose output format and handling of items are unknown from the diff. Callers relying on the prior string format may break.",
+            "severity": "medium",
+            "blocking": false,
+            "requirement_ids": [],
+            "suggested_action": "Document or test the expected output of format_order_summary and verify callers of process_order tolerate the new return format."
+          }
+        ],
+        "assessments": []
+      },
+      "variant_b": {
+        "variant_name": "variant_b",
+        "correct_findings": 1,
+        "false_positives": 0,
+        "false_positives_clean": 0,
+        "invalid_locations": 0,
+        "requirements_correct": 0,
+        "total_requirements": 0,
+        "comments_count": 1,
+        "tokens_used": 955,
+        "prompt_tokens": 665,
+        "output_tokens": 290,
+        "latency_seconds": 2.0228,
+        "estimated_cost_usd": 0.000137,
+        "findings": [
+          {
+            "file_path": "src/orders/processor.py",
+            "line": 4,
+            "end_line": null,
+            "label": "issue",
+            "decorations": [
+              "blocking"
+            ],
+            "subject": "Missing required 'currency' argument in format_order_summary call",
+            "description": "process_order calls format_order_summary(order_id, items) but the helper signature is format_order_summary(order_id: str, items: list[dict], currency: str). This will raise TypeError: format_order_summary() missing 1 required positional argument: 'currency' on every invocation, breaking order processing.",
+            "severity": "high",
+            "blocking": true,
+            "requirement_ids": [],
+            "suggested_action": "Pass a currency value to format_order_summary, e.g. format_order_summary(order_id, items, currency), and thread a currency parameter through process_order or derive it from order data."
+          }
+        ],
+        "assessments": []
+      },
+      "variant_c": {
+        "variant_name": "variant_c",
+        "correct_findings": 1,
+        "false_positives": 0,
+        "false_positives_clean": 0,
+        "invalid_locations": 0,
+        "requirements_correct": 0,
+        "total_requirements": 0,
+        "comments_count": 1,
+        "tokens_used": 968,
+        "prompt_tokens": 665,
+        "output_tokens": 303,
+        "latency_seconds": 2.0478,
+        "estimated_cost_usd": 0.000141,
+        "findings": [
+          {
+            "id": "rev-001",
+            "file_path": "src/orders/processor.py",
+            "line": 4,
+            "end_line": null,
+            "label": "issue",
+            "decorations": [
+              "blocking"
+            ],
+            "subject": "Missing required currency argument to format_order_summary",
+            "description": "format_order_summary is defined in src/orders/helpers.py as format_order_summary(order_id, items, currency) with three required positional parameters. The call at processor.py:4 passes only (order_id, items), so every invocation of process_order will raise TypeError: format_order_summary() missing 1 required positional argument: 'currency'. This breaks order processing entirely.",
+            "severity": "high",
+            "blocking": true,
+            "requirement_ids": [],
+            "evidence_status": "model_inferred",
+            "review_status": "reported",
+            "suggested_action": "(Proposed remedy \u2014 model inferred): Pass a currency value to the helper, e.g. format_order_summary(order_id, items, currency), and thread a currency parameter through process_order (or derive it from the order/items). Alternatively, give currency a default in helpers.py if a default is acceptable.",
+            "dedup_key": null
+          }
+        ],
+        "assessments": [
+          {
+            "requirement_id": "NONE",
+            "source_file": null,
+            "text": "No requirement document supplied.",
+            "status": "not_assessed",
+            "explanation": "No requirements document was supplied; standard code quality review was performed.",
+            "related_finding_ids": [],
+            "related_locations": []
+          }
+        ]
+      },
+      "variant_replay": {
+        "variant_name": "variant_replay",
+        "correct_findings": 1,
+        "false_positives": 0,
+        "false_positives_clean": 0,
+        "invalid_locations": 0,
+        "requirements_correct": 0,
+        "total_requirements": 0,
+        "comments_count": 1,
+        "tokens_used": 955,
+        "prompt_tokens": 665,
+        "output_tokens": 290,
+        "latency_seconds": 0.0309,
+        "estimated_cost_usd": 0.000137,
+        "findings": [
+          {
+            "id": "rev-001",
+            "file_path": "src/orders/processor.py",
+            "line": 4,
+            "end_line": null,
+            "label": "issue",
+            "decorations": [
+              "blocking"
+            ],
+            "subject": "Missing required 'currency' argument in format_order_summary call",
+            "description": "process_order calls format_order_summary(order_id, items) but the helper signature is format_order_summary(order_id: str, items: list[dict], currency: str). This will raise TypeError: format_order_summary() missing 1 required positional argument: 'currency' on every invocation, breaking order processing.",
+            "severity": "high",
+            "blocking": true,
+            "requirement_ids": [],
+            "evidence_status": "model_inferred",
+            "review_status": "reported",
+            "suggested_action": "(Proposed remedy \u2014 model inferred): Pass a currency value to format_order_summary, e.g. format_order_summary(order_id, items, currency), and thread a currency parameter through process_order or derive it from order data.",
+            "dedup_key": null
+          }
+        ],
+        "assessments": [
+          {
+            "requirement_id": "NONE",
+            "source_file": null,
+            "text": "No requirement document supplied.",
+            "status": "not_assessed",
+            "explanation": "No requirements document was supplied; standard code quality review was performed.",
+            "related_finding_ids": [],
+            "related_locations": []
+          }
+        ]
+      }
+    },
+    {
+      "case_id": "dev_09_missing_edge_case_empty_collection",
+      "name": "Missing Edge Case: Unchecked Empty Collection Indexing",
+      "split": "dev",
+      "category": "missing_edge_case",
+      "expected_verdict": "has_defects",
+      "expected_defects_count": 1,
+      "total_requirements": 0,
+      "variant_a": {
+        "variant_name": "variant_a",
+        "correct_findings": 1,
+        "false_positives": 1,
+        "false_positives_clean": 0,
+        "invalid_locations": 0,
+        "requirements_correct": 0,
+        "total_requirements": 0,
+        "comments_count": 4,
+        "tokens_used": 1088,
+        "prompt_tokens": 428,
+        "output_tokens": 660,
+        "latency_seconds": 3.5514,
+        "estimated_cost_usd": 0.00023,
+        "findings": [
+          {
+            "file_path": "src/handlers/users.py",
+            "line": 2,
+            "end_line": null,
+            "label": "issue",
+            "decorations": [
+              "blocking"
+            ],
+            "subject": "IndexError on empty users list",
+            "description": "`users[0]` raises IndexError when `users` is empty. Callers passing an empty list (e.g., a team with no members) will crash instead of receiving a defined result.",
+            "severity": "high",
+            "blocking": true,
+            "requirement_ids": [],
+            "suggested_action": "Guard against empty input: raise a clear ValueError or return None, and document the contract."
+          },
+          {
+            "file_path": "src/handlers/users.py",
+            "line": 3,
+            "end_line": null,
+            "label": "issue",
+            "decorations": [
+              "blocking"
+            ],
+            "subject": "KeyError when user dict lacks 'id'",
+            "description": "`primary['id']` raises KeyError if the first user dict does not contain an 'id' key. The function does not validate the shape of the input dicts.",
+            "severity": "medium",
+            "blocking": true,
+            "requirement_ids": [],
+            "suggested_action": "Use `primary.get('id')` with an explicit error, or validate the dict schema before access."
+          },
+          {
+            "file_path": "src/handlers/users.py",
+            "line": 2,
+            "end_line": null,
+            "label": "question",
+            "decorations": [],
+            "subject": "Assumption that first user is the lead",
+            "description": "The function silently treats `users[0]` as the lead user. If the list is not pre-sorted or filtered to put the lead first, this returns the wrong user's id.",
+            "severity": "medium",
+            "blocking": false,
+            "requirement_ids": [],
+            "suggested_action": "Select the lead explicitly (e.g., by a role/flag field) or document and enforce the ordering precondition."
+          },
+          {
+            "file_path": "src/handlers/users.py",
+            "line": 1,
+            "end_line": null,
+            "label": "suggestion",
+            "decorations": [],
+            "subject": "Missing type validation and docstring",
+            "description": "The function has no docstring and does not validate that `users` is a list of dicts, making misuse harder to diagnose.",
+            "severity": "low",
+            "blocking": false,
+            "requirement_ids": [],
+            "suggested_action": "Add a docstring describing preconditions and return value, and consider validating input types."
+          }
+        ],
+        "assessments": []
+      },
+      "variant_b": {
+        "variant_name": "variant_b",
+        "correct_findings": 1,
+        "false_positives": 0,
+        "false_positives_clean": 0,
+        "invalid_locations": 0,
+        "requirements_correct": 0,
+        "total_requirements": 0,
+        "comments_count": 2,
+        "tokens_used": 1006,
+        "prompt_tokens": 555,
+        "output_tokens": 451,
+        "latency_seconds": 2.4275,
+        "estimated_cost_usd": 0.000177,
+        "findings": [
+          {
+            "file_path": "src/handlers/users.py",
+            "line": 3,
+            "end_line": null,
+            "label": "issue",
+            "decorations": [
+              "blocking"
+            ],
+            "subject": "Unhandled empty list raises IndexError",
+            "description": "`get_lead_user_id` indexes `users[0]` without checking whether `users` is empty. Calling it with an empty list raises `IndexError`, which will propagate to callers and likely surface as a 500 error in the handler layer. The surrounding comment on line 2 explicitly notes this unhandled case.",
+            "severity": "high",
+            "blocking": true,
+            "requirement_ids": [],
+            "suggested_action": "Guard against empty input before indexing, e.g. `if not users: raise ValueError('users must not be empty')` or return `None`/a sentinel, and document the chosen contract. Consider also validating that each entry contains an `'id'` key."
+          },
+          {
+            "file_path": "src/handlers/users.py",
+            "line": 4,
+            "end_line": null,
+            "label": "suggestion",
+            "decorations": [],
+            "subject": "Missing key access raises KeyError",
+            "description": "`primary['id']` assumes every user dict has an `'id'` key. If the upstream data omits it, a `KeyError` is raised with no contextual message, making debugging harder.",
+            "severity": "medium",
+            "blocking": false,
+            "requirement_ids": [],
+            "suggested_action": "Use `primary.get('id')` with an explicit error/None handling path, or validate the schema of the input list before accessing keys."
+          }
+        ],
+        "assessments": []
+      },
+      "variant_c": {
+        "variant_name": "variant_c",
+        "correct_findings": 1,
+        "false_positives": 1,
+        "false_positives_clean": 0,
+        "invalid_locations": 0,
+        "requirements_correct": 0,
+        "total_requirements": 0,
+        "comments_count": 3,
+        "tokens_used": 1196,
+        "prompt_tokens": 555,
+        "output_tokens": 641,
+        "latency_seconds": 3.6795,
+        "estimated_cost_usd": 0.000234,
+        "findings": [
+          {
+            "id": "rev-001",
+            "file_path": "src/handlers/users.py",
+            "line": 3,
+            "end_line": null,
+            "label": "issue",
+            "decorations": [
+              "blocking"
+            ],
+            "subject": "Unhandled empty user list raises IndexError",
+            "description": "`get_lead_user_id` indexes `users[0]` without checking whether `users` is empty. If called with an empty list, it raises `IndexError`, which will propagate to callers and can cause request failures or 500 responses in the handler layer.",
+            "severity": "high",
+            "blocking": true,
+            "requirement_ids": [],
+            "evidence_status": "model_inferred",
+            "review_status": "reported",
+            "suggested_action": "(Proposed remedy \u2014 model inferred): Guard against an empty collection before indexing, e.g. `if not users: raise ValueError('users must not be empty')` or return `None`/a sentinel, and document the chosen contract.",
+            "dedup_key": null
+          },
+          {
+            "id": "rev-002",
+            "file_path": "src/handlers/users.py",
+            "line": 4,
+            "end_line": null,
+            "label": "issue",
+            "decorations": [
+              "blocking"
+            ],
+            "subject": "Missing 'id' key raises KeyError",
+            "description": "`primary['id']` assumes every user dict contains an `'id'` key. If the first user record lacks `'id'` (e.g. partial data or a different schema), a `KeyError` is raised instead of a clear domain error.",
+            "severity": "medium",
+            "blocking": true,
+            "requirement_ids": [],
+            "evidence_status": "model_inferred",
+            "review_status": "reported",
+            "suggested_action": "(Proposed remedy \u2014 model inferred): Validate the key or use `primary.get('id')` with an explicit error/None handling path, and consider validating the input schema before indexing.",
+            "dedup_key": null
+          },
+          {
+            "id": "rev-003",
+            "file_path": "src/handlers/users.py",
+            "line": 1,
+            "end_line": null,
+            "label": "suggestion",
+            "decorations": [
+              "non-blocking"
+            ],
+            "subject": "Type annotation does not reflect possible failure modes",
+            "description": "The function is annotated to return `str`, but the current implementation can raise exceptions rather than return a value. The contract for empty input is undocumented, making caller behavior ambiguous.",
+            "severity": "low",
+            "blocking": false,
+            "requirement_ids": [],
+            "evidence_status": "model_inferred",
+            "review_status": "reported",
+            "suggested_action": "(Proposed remedy \u2014 model inferred): Document the precondition (non-empty list with `'id'` present) in a docstring, or change the return type to `str | None` if empty input is a valid case.",
+            "dedup_key": null
+          }
+        ],
+        "assessments": [
+          {
+            "requirement_id": "NONE",
+            "source_file": null,
+            "text": "No requirement document supplied.",
+            "status": "not_assessed",
+            "explanation": "No requirements document was supplied; standard code quality review was performed.",
+            "related_finding_ids": [],
+            "related_locations": []
+          }
+        ]
+      },
+      "variant_replay": {
+        "variant_name": "variant_replay",
+        "correct_findings": 1,
+        "false_positives": 0,
+        "false_positives_clean": 0,
+        "invalid_locations": 0,
+        "requirements_correct": 0,
+        "total_requirements": 0,
+        "comments_count": 2,
+        "tokens_used": 1006,
+        "prompt_tokens": 555,
+        "output_tokens": 451,
+        "latency_seconds": 0.0284,
+        "estimated_cost_usd": 0.000177,
+        "findings": [
+          {
+            "id": "rev-001",
+            "file_path": "src/handlers/users.py",
+            "line": 3,
+            "end_line": null,
+            "label": "issue",
+            "decorations": [
+              "blocking"
+            ],
+            "subject": "Unhandled empty list raises IndexError",
+            "description": "`get_lead_user_id` indexes `users[0]` without checking whether `users` is empty. Calling it with an empty list raises `IndexError`, which will propagate to callers and likely surface as a 500 error in the handler layer. The surrounding comment on line 2 explicitly notes this unhandled case.",
+            "severity": "high",
+            "blocking": true,
+            "requirement_ids": [],
+            "evidence_status": "model_inferred",
+            "review_status": "reported",
+            "suggested_action": "(Proposed remedy \u2014 model inferred): Guard against empty input before indexing, e.g. `if not users: raise ValueError('users must not be empty')` or return `None`/a sentinel, and document the chosen contract. Consider also validating that each entry contains an `'id'` key.",
+            "dedup_key": null
+          },
+          {
+            "id": "rev-002",
+            "file_path": "src/handlers/users.py",
+            "line": 4,
+            "end_line": null,
+            "label": "suggestion",
+            "decorations": [],
+            "subject": "Missing key access raises KeyError",
+            "description": "`primary['id']` assumes every user dict has an `'id'` key. If the upstream data omits it, a `KeyError` is raised with no contextual message, making debugging harder.",
+            "severity": "medium",
+            "blocking": false,
+            "requirement_ids": [],
+            "evidence_status": "model_inferred",
+            "review_status": "reported",
+            "suggested_action": "(Proposed remedy \u2014 model inferred): Use `primary.get('id')` with an explicit error/None handling path, or validate the schema of the input list before accessing keys.",
+            "dedup_key": null
+          }
+        ],
+        "assessments": [
+          {
+            "requirement_id": "NONE",
+            "source_file": null,
+            "text": "No requirement document supplied.",
+            "status": "not_assessed",
+            "explanation": "No requirements document was supplied; standard code quality review was performed.",
+            "related_finding_ids": [],
+            "related_locations": []
+          }
+        ]
+      }
+    },
+    {
+      "case_id": "dev_10_surrounding_code_regression",
+      "name": "Surrounding Code: Class Attribute Default Breaks Unedited Method",
+      "split": "dev",
+      "category": "surrounding_code_regression",
+      "expected_verdict": "has_defects",
+      "expected_defects_count": 1,
+      "total_requirements": 0,
+      "variant_a": {
+        "variant_name": "variant_a",
+        "correct_findings": 1,
+        "false_positives": 0,
+        "false_positives_clean": 0,
+        "invalid_locations": 0,
+        "requirements_correct": 0,
+        "total_requirements": 0,
+        "comments_count": 2,
+        "tokens_used": 961,
+        "prompt_tokens": 426,
+        "output_tokens": 535,
+        "latency_seconds": 3.5237,
+        "estimated_cost_usd": 0.000192,
+        "findings": [
+          {
+            "file_path": "src/service/client.py",
+            "line": 2,
+            "end_line": null,
+            "label": "issue",
+            "decorations": [
+              "blocking"
+            ],
+            "subject": "Default timeout silently changed from 30 to None",
+            "description": "The default value of `timeout` changed from `30` to `None`. Any caller relying on the previous default will now construct a client with `self.timeout = None`. If downstream code passes `self.timeout` to socket/HTTP libraries or performs arithmetic/comparisons, this can raise `TypeError` or cause requests to hang indefinitely (no timeout). This is a behavioral regression not reflected in the signature alone.",
+            "severity": "high",
+            "blocking": true,
+            "requirement_ids": [],
+            "suggested_action": "Preserve the previous default (e.g., `timeout: int | None = 30`) or explicitly document and handle `None` at every use site of `self.timeout` (e.g., resolve to a library default before use)."
+          },
+          {
+            "file_path": "src/service/client.py",
+            "line": 3,
+            "end_line": null,
+            "label": "question",
+            "decorations": [],
+            "subject": "Downstream handling of nullable timeout is unverified",
+            "description": "`self.timeout` is now typed `int | None`, but this diff does not show any consumer code. If `self.timeout` is forwarded to APIs expecting an `int` (e.g., `requests`/`socket` timeouts), passing `None` changes semantics or fails. The type widening should be accompanied by explicit handling or narrowing at use sites.",
+            "severity": "medium",
+            "blocking": false,
+            "requirement_ids": [],
+            "suggested_action": "Audit all reads of `self.timeout` and either narrow the type (assert/fallback) or document that `None` means 'no timeout' and ensure consumers support it."
+          }
+        ],
+        "assessments": []
+      },
+      "variant_b": {
+        "variant_name": "variant_b",
+        "correct_findings": 1,
+        "false_positives": 0,
+        "false_positives_clean": 0,
+        "invalid_locations": 0,
+        "requirements_correct": 0,
+        "total_requirements": 0,
+        "comments_count": 2,
+        "tokens_used": 1127,
+        "prompt_tokens": 600,
+        "output_tokens": 527,
+        "latency_seconds": 3.1398,
+        "estimated_cost_usd": 0.000203,
+        "findings": [
+          {
+            "file_path": "src/service/client.py",
+            "line": 2,
+            "end_line": null,
+            "label": "issue",
+            "decorations": [
+              "blocking"
+            ],
+            "subject": "Default timeout of None breaks get_timeout_ms",
+            "description": "Changing the default `timeout` from 30 to None means `self.timeout` is None for callers that omit the argument. The unchanged `get_timeout_ms` at line 8 computes `self.timeout * 1000`, which raises `TypeError: unsupported operand type(s) for *: 'NoneType' and 'int'`. This is a behavioral regression for all existing callers that relied on the previous default of 30.",
+            "severity": "high",
+            "blocking": true,
+            "requirement_ids": [],
+            "suggested_action": "Either preserve a numeric default (e.g., `timeout: int = 30`) or update `get_timeout_ms` to handle `None` explicitly (e.g., return a documented default or raise a clear ValueError). If None is intended to mean 'no timeout', make that semantics explicit and consistent across the class."
+          },
+          {
+            "file_path": "src/service/client.py",
+            "line": 8,
+            "end_line": null,
+            "label": "suggestion",
+            "decorations": [
+              "non-blocking"
+            ],
+            "subject": "Type annotation of get_timeout_ms no longer matches possible state",
+            "description": "`get_timeout_ms` is annotated to return `int`, but with `self.timeout` now possibly `None`, the method cannot fulfill its contract without additional handling. This inconsistency should be resolved alongside the default change.",
+            "severity": "medium",
+            "blocking": false,
+            "requirement_ids": [],
+            "suggested_action": "Add explicit None handling in `get_timeout_ms` and document the resulting behavior, or revert the default to a concrete integer."
+          }
+        ],
+        "assessments": []
+      },
+      "variant_c": {
+        "variant_name": "variant_c",
+        "correct_findings": 1,
+        "false_positives": 0,
+        "false_positives_clean": 0,
+        "invalid_locations": 0,
+        "requirements_correct": 0,
+        "total_requirements": 0,
+        "comments_count": 1,
+        "tokens_used": 972,
+        "prompt_tokens": 600,
+        "output_tokens": 372,
+        "latency_seconds": 2.3421,
+        "estimated_cost_usd": 0.000157,
+        "findings": [
+          {
+            "id": "rev-001",
+            "file_path": "src/service/client.py",
+            "line": 2,
+            "end_line": null,
+            "label": "issue",
+            "decorations": [
+              "blocking"
+            ],
+            "subject": "Default timeout of None causes TypeError in get_timeout_ms",
+            "description": "Changing the default `timeout` from `30` to `None` means `self.timeout` is `None` for callers that do not pass a timeout. The unchanged `get_timeout_ms` method at line 8 performs `self.timeout * 1000`, which raises `TypeError: unsupported operand type(s) for *: 'NoneType' and 'int'`. This breaks existing behavior for any code relying on the previous default of 30 seconds.",
+            "severity": "high",
+            "blocking": true,
+            "requirement_ids": [],
+            "evidence_status": "model_inferred",
+            "review_status": "reported",
+            "suggested_action": "(Proposed remedy \u2014 model inferred): Either keep the default as `30` (and type `int`), or update `get_timeout_ms` to handle `None` (e.g., return a sentinel or raise a clear error), and ensure all callers are updated to pass an explicit timeout.",
+            "dedup_key": null
+          }
+        ],
+        "assessments": [
+          {
+            "requirement_id": "NONE",
+            "source_file": null,
+            "text": "No requirement document supplied.",
+            "status": "not_assessed",
+            "explanation": "No requirements document was supplied; standard code quality review was performed.",
+            "related_finding_ids": [],
+            "related_locations": []
+          }
+        ]
+      },
+      "variant_replay": {
+        "variant_name": "variant_replay",
+        "correct_findings": 1,
+        "false_positives": 0,
+        "false_positives_clean": 0,
+        "invalid_locations": 0,
+        "requirements_correct": 0,
+        "total_requirements": 0,
+        "comments_count": 1,
+        "tokens_used": 1127,
+        "prompt_tokens": 600,
+        "output_tokens": 527,
+        "latency_seconds": 0.0224,
+        "estimated_cost_usd": 0.000203,
+        "findings": [
+          {
+            "id": "rev-001",
+            "file_path": "src/service/client.py",
+            "line": 2,
+            "end_line": null,
+            "label": "issue",
+            "decorations": [
+              "blocking"
+            ],
+            "subject": "Default timeout of None breaks get_timeout_ms",
+            "description": "Changing the default `timeout` from 30 to None means `self.timeout` is None for callers that omit the argument. The unchanged `get_timeout_ms` at line 8 computes `self.timeout * 1000`, which raises `TypeError: unsupported operand type(s) for *: 'NoneType' and 'int'`. This is a behavioral regression for all existing callers that relied on the previous default of 30.\n\n*(Related perspective [suggestion]: Type annotation of get_timeout_ms no longer matches possible state)*",
+            "severity": "high",
+            "blocking": true,
+            "requirement_ids": [],
+            "evidence_status": "model_inferred",
+            "review_status": "reported",
+            "suggested_action": "(Proposed remedy \u2014 model inferred): Either preserve a numeric default (e.g., `timeout: int = 30`) or update `get_timeout_ms` to handle `None` explicitly (e.g., return a documented default or raise a clear ValueError). If None is intended to mean 'no timeout', make that semantics explicit and consistent across the class.",
+            "dedup_key": null
+          }
+        ],
+        "assessments": [
+          {
+            "requirement_id": "NONE",
+            "source_file": null,
+            "text": "No requirement document supplied.",
+            "status": "not_assessed",
+            "explanation": "No requirements document was supplied; standard code quality review was performed.",
+            "related_finding_ids": [],
+            "related_locations": []
+          }
+        ]
+      }
+    },
+    {
+      "case_id": "held_out_01_jwt_none_algorithm",
+      "name": "Held-Out: Insecure JWT 'none' Algorithm Allowed",
+      "split": "held_out",
+      "category": "security_sensitive",
+      "expected_verdict": "has_defects",
+      "expected_defects_count": 1,
+      "total_requirements": 1,
+      "variant_a": {
+        "variant_name": "variant_a",
+        "correct_findings": 1,
+        "false_positives": 0,
+        "false_positives_clean": 0,
+        "invalid_locations": 0,
+        "requirements_correct": 1,
+        "total_requirements": 1,
+        "comments_count": 1,
+        "tokens_used": 898,
+        "prompt_tokens": 478,
+        "output_tokens": 420,
+        "latency_seconds": 2.6642,
+        "estimated_cost_usd": 0.000162,
+        "findings": [
+          {
+            "file_path": "src/auth/jwt.py",
+            "line": 6,
+            "end_line": null,
+            "label": "issue",
+            "decorations": [
+              "blocking",
+              "security"
+            ],
+            "subject": "alg='none' tokens are accepted and returned unverified",
+            "description": "The new branch checks if the header's 'alg' field (lowercased) equals 'none' and, if so, returns the decoded payload directly. This means any attacker can craft a token with alg='none' and arbitrary claims, and the function will accept it without signature verification, enabling authentication/authorization bypass. This is a well-known JWT vulnerability class.",
+            "severity": "critical",
+            "blocking": true,
+            "requirement_ids": [
+              "REQ-SEC-05"
+            ],
+            "suggested_action": "Remove the alg='none' acceptance branch entirely. Instead, explicitly reject tokens with alg='none' (or any unsigned algorithm) by raising an exception, and only proceed with verified algorithms. For example: if header.get('alg', '').lower() == 'none': raise ValueError('Unsigned tokens are not allowed')."
+          }
+        ],
+        "assessments": [
+          {
+            "requirement_id": "REQ-SEC-05",
+            "status": "not_satisfied",
+            "explanation": "The code explicitly accepts tokens with alg='none' and returns their payload without verification, which is the opposite of strict rejection. This violates the requirement.",
+            "related_locations": [
+              "src/auth/jwt.py:6"
+            ]
+          }
+        ]
+      },
+      "variant_b": {
+        "variant_name": "variant_b",
+        "correct_findings": 1,
+        "false_positives": 0,
+        "false_positives_clean": 0,
+        "invalid_locations": 0,
+        "requirements_correct": 1,
+        "total_requirements": 1,
+        "comments_count": 1,
+        "tokens_used": 1116,
+        "prompt_tokens": 680,
+        "output_tokens": 436,
+        "latency_seconds": 2.753,
+        "estimated_cost_usd": 0.000182,
+        "findings": [
+          {
+            "file_path": "src/auth/jwt.py",
+            "line": 8,
+            "end_line": null,
+            "label": "issue",
+            "decorations": [
+              "blocking",
+              "security"
+            ],
+            "subject": "alg='none' tokens are accepted without signature verification",
+            "description": "When the JWT header's alg field is 'none' (case-insensitive), decode_jwt returns the decoded payload from parts[1] without verifying any signature. This allows an attacker to forge arbitrary tokens with alg='none' and have them accepted as valid, bypassing authentication entirely. The surrounding comment at line 7 explicitly notes this is a security flaw, and the behavior contradicts the policy that unsigned tokens must be rejected.",
+            "severity": "critical",
+            "blocking": true,
+            "requirement_ids": [
+              "REQ-SEC-05"
+            ],
+            "suggested_action": "Remove the alg='none' branch and instead explicitly reject tokens whose header alg is 'none' (or missing/empty) by raising an exception before any payload decoding. Only proceed to verification for supported signed algorithms."
+          }
+        ],
+        "assessments": [
+          {
+            "requirement_id": "REQ-SEC-05",
+            "status": "not_satisfied",
+            "explanation": "REQ-SEC-05 requires that unsigned tokens or tokens specifying alg='none' be strictly rejected. The new code at src/auth/jwt.py:8-9 does the opposite: it detects alg='none' and returns the decoded payload without verification, effectively accepting unsigned tokens.",
+            "related_locations": [
+              "src/auth/jwt.py:8",
+              "src/auth/jwt.py:9"
+            ]
+          }
+        ]
+      },
+      "variant_c": {
+        "variant_name": "variant_c",
+        "correct_findings": 1,
+        "false_positives": 0,
+        "false_positives_clean": 0,
+        "invalid_locations": 0,
+        "requirements_correct": 1,
+        "total_requirements": 1,
+        "comments_count": 1,
+        "tokens_used": 1154,
+        "prompt_tokens": 675,
+        "output_tokens": 479,
+        "latency_seconds": 2.777,
+        "estimated_cost_usd": 0.000194,
+        "findings": [
+          {
+            "id": "rev-001",
+            "file_path": "src/auth/jwt.py",
+            "line": 8,
+            "end_line": null,
+            "label": "issue",
+            "decorations": [
+              "blocking",
+              "security"
+            ],
+            "subject": "alg='none' tokens are accepted and returned without verification",
+            "description": "The new branch checks header.get('alg', '').lower() == 'none' and, if true, returns json.loads(base64.b64decode(parts[1])) directly. This means any attacker can craft a token with an unsigned 'none' algorithm header and arbitrary payload, and decode_jwt will return that payload as if it were authenticated. This is a classic JWT 'none' algorithm authentication bypass and directly contradicts REQ-SEC-05, which mandates strict rejection of unsigned tokens and alg='none'.",
+            "severity": "critical",
+            "blocking": true,
+            "requirement_ids": [
+              "REQ-SEC-05"
+            ],
+            "evidence_status": "model_inferred",
+            "review_status": "reported",
+            "suggested_action": "(Proposed remedy \u2014 model inferred): Remove the alg='none' branch entirely. Instead, explicitly reject tokens whose header alg is 'none' (case-insensitive) by raising an exception (e.g., ValueError or a dedicated InvalidTokenError) before any payload decoding. Only allow a fixed allowlist of verified algorithms and verify the signature before returning the payload.",
+            "dedup_key": null
+          }
+        ],
+        "assessments": [
+          {
+            "requirement_id": "REQ-SEC-05",
+            "source_file": "inline",
+            "text": "Unsigned tokens or tokens specifying alg='none' must be strictly rejected.",
+            "status": "not_satisfied",
+            "explanation": "Requirement not satisfied: unresolved issue(s) identified (rev-001).",
+            "related_finding_ids": [
+              "rev-001"
+            ],
+            "related_locations": []
+          }
+        ]
+      },
+      "variant_replay": {
+        "variant_name": "variant_replay",
+        "correct_findings": 1,
+        "false_positives": 0,
+        "false_positives_clean": 0,
+        "invalid_locations": 0,
+        "requirements_correct": 1,
+        "total_requirements": 1,
+        "comments_count": 1,
+        "tokens_used": 1116,
+        "prompt_tokens": 680,
+        "output_tokens": 436,
+        "latency_seconds": 0.0275,
+        "estimated_cost_usd": 0.000182,
+        "findings": [
+          {
+            "id": "rev-001",
+            "file_path": "src/auth/jwt.py",
+            "line": 8,
+            "end_line": null,
+            "label": "issue",
+            "decorations": [
+              "blocking",
+              "security"
+            ],
+            "subject": "alg='none' tokens are accepted without signature verification",
+            "description": "When the JWT header's alg field is 'none' (case-insensitive), decode_jwt returns the decoded payload from parts[1] without verifying any signature. This allows an attacker to forge arbitrary tokens with alg='none' and have them accepted as valid, bypassing authentication entirely. The surrounding comment at line 7 explicitly notes this is a security flaw, and the behavior contradicts the policy that unsigned tokens must be rejected.",
+            "severity": "critical",
+            "blocking": true,
+            "requirement_ids": [
+              "REQ-SEC-05"
+            ],
+            "evidence_status": "model_inferred",
+            "review_status": "reported",
+            "suggested_action": "(Proposed remedy \u2014 model inferred): Remove the alg='none' branch and instead explicitly reject tokens whose header alg is 'none' (or missing/empty) by raising an exception before any payload decoding. Only proceed to verification for supported signed algorithms.",
+            "dedup_key": null
+          }
+        ],
+        "assessments": [
+          {
+            "requirement_id": "REQ-SEC-05",
+            "source_file": "inline",
+            "text": "Unsigned tokens or tokens specifying alg='none' must be strictly rejected.",
+            "status": "not_satisfied",
+            "explanation": "Requirement not satisfied: unresolved issue(s) identified (rev-001).",
+            "related_finding_ids": [
+              "rev-001"
+            ],
+            "related_locations": []
+          }
+        ]
+      }
+    },
+    {
+      "case_id": "held_out_02_clean_typing_migration",
+      "name": "Held-Out: Clean Type Annotation Modernization",
+      "split": "held_out",
+      "category": "clean_change",
+      "expected_verdict": "clean",
+      "expected_defects_count": 0,
+      "total_requirements": 0,
+      "variant_a": {
+        "variant_name": "variant_a",
+        "correct_findings": 0,
+        "false_positives": 1,
+        "false_positives_clean": 1,
+        "invalid_locations": 0,
+        "requirements_correct": 0,
+        "total_requirements": 0,
+        "comments_count": 2,
+        "tokens_used": 1021,
+        "prompt_tokens": 453,
+        "output_tokens": 568,
+        "latency_seconds": 3.3395,
+        "estimated_cost_usd": 0.000204,
+        "findings": [
+          {
+            "file_path": "src/types/protocol.py",
+            "line": 2,
+            "end_line": null,
+            "label": "issue",
+            "decorations": [
+              "blocking"
+            ],
+            "subject": "PEP 604 union syntax requires Python 3.10+",
+            "description": "The signature now uses `str | None`, which is only valid at runtime in Python 3.10 and later. If the project still supports Python 3.9 or earlier, importing this module will raise a TypeError at function definition time. The previous `Optional[str]` worked on all supported versions. No pyproject.toml or setup.cfg is shown to confirm the minimum Python version.",
+            "severity": "high",
+            "blocking": true,
+            "requirement_ids": [],
+            "suggested_action": "Confirm the project's minimum Python version. If it is below 3.10, either revert to `Optional[str]` or add `from __future__ import annotations` at the top of the file to defer evaluation of annotations."
+          },
+          {
+            "file_path": "src/types/protocol.py",
+            "line": 2,
+            "end_line": null,
+            "label": "suggestion",
+            "decorations": [],
+            "subject": "Widening parameter type from List to Sequence may affect callers",
+            "description": "Changing the `ids` parameter from `List[str]` to `Sequence[str]` broadens the accepted input types (e.g., tuples, strings). This is generally an improvement for a read-only function, but if any caller relied on list-specific behavior or if the function mutates `ids`, this could introduce subtle bugs. The function body is not shown, so mutation cannot be ruled out.",
+            "severity": "low",
+            "blocking": false,
+            "requirement_ids": [],
+            "suggested_action": "Verify that `find_matching_ids` does not mutate `ids`. If it does, keep `List[str]` or use `MutableSequence[str]`. Otherwise, the change is safe and beneficial."
+          }
+        ],
+        "assessments": []
+      },
+      "variant_b": {
+        "variant_name": "variant_b",
+        "correct_findings": 0,
+        "false_positives": 0,
+        "false_positives_clean": 0,
+        "invalid_locations": 0,
+        "requirements_correct": 0,
+        "total_requirements": 0,
+        "comments_count": 2,
+        "tokens_used": 1076,
+        "prompt_tokens": 581,
+        "output_tokens": 495,
+        "latency_seconds": 3.0714,
+        "estimated_cost_usd": 0.000192,
+        "findings": [
+          {
+            "file_path": "src/types/protocol.py",
+            "line": 3,
+            "end_line": null,
+            "label": "praise",
+            "decorations": [
+              "non-blocking"
+            ],
+            "subject": "Improved type annotations using modern Python syntax",
+            "description": "Replacing `typing.List` with `collections.abc.Sequence` broadens the accepted input to any sequence (tuples, etc.) while the return type `list[str]` accurately reflects the concrete list constructed in the body. The `str | None` union is clearer and avoids the deprecated `Optional` import.",
+            "severity": "low",
+            "blocking": false,
+            "requirement_ids": [],
+            "suggested_action": "No action required; this is a positive modernization."
+          },
+          {
+            "file_path": "src/types/protocol.py",
+            "line": 3,
+            "end_line": null,
+            "label": "question",
+            "decorations": [
+              "non-blocking"
+            ],
+            "subject": "Confirm minimum supported Python version for PEP 604 syntax",
+            "description": "The `str | None` union syntax requires Python 3.10+ at runtime (or `from __future__ import annotations` for earlier versions). If the project still supports Python 3.9 or older, this change could break imports. The diff does not show a `from __future__ import annotations` import.",
+            "severity": "medium",
+            "blocking": false,
+            "requirement_ids": [],
+            "suggested_action": "Verify the project's minimum Python version (e.g., in pyproject.toml or setup.cfg). If Python < 3.10 must be supported, add `from __future__ import annotations` or revert to `Optional[str]`."
+          }
+        ],
+        "assessments": []
+      },
+      "variant_c": {
+        "variant_name": "variant_c",
+        "correct_findings": 0,
+        "false_positives": 0,
+        "false_positives_clean": 0,
+        "invalid_locations": 0,
+        "requirements_correct": 0,
+        "total_requirements": 0,
+        "comments_count": 1,
+        "tokens_used": 931,
+        "prompt_tokens": 581,
+        "output_tokens": 350,
+        "latency_seconds": 2.4364,
+        "estimated_cost_usd": 0.000149,
+        "findings": [
+          {
+            "id": "rev-001",
+            "file_path": "src/types/protocol.py",
+            "line": 3,
+            "end_line": null,
+            "label": "question",
+            "decorations": [
+              "non-blocking"
+            ],
+            "subject": "PEP 604 union syntax requires Python 3.10+",
+            "description": "The signature now uses `str | None` and `list[str]`. The `|` union operator in annotations is only valid at runtime on Python 3.10+ (unless `from __future__ import annotations` is present, which it is not). If the project still supports Python 3.8/3.9, importing this module will raise a `TypeError` at function definition time.",
+            "severity": "medium",
+            "blocking": false,
+            "requirement_ids": [],
+            "evidence_status": "model_inferred",
+            "review_status": "reported",
+            "suggested_action": "(Proposed remedy \u2014 model inferred): Confirm the minimum supported Python version is 3.10+. If older versions must be supported, either add `from __future__ import annotations` at the top of the file or revert to `Optional[str]`/`List[str]`.",
+            "dedup_key": null
+          }
+        ],
+        "assessments": [
+          {
+            "requirement_id": "NONE",
+            "source_file": null,
+            "text": "No requirement document supplied.",
+            "status": "not_assessed",
+            "explanation": "No requirements document was supplied; standard code quality review was performed.",
+            "related_finding_ids": [],
+            "related_locations": []
+          }
+        ]
+      },
+      "variant_replay": {
+        "variant_name": "variant_replay",
+        "correct_findings": 0,
+        "false_positives": 0,
+        "false_positives_clean": 0,
+        "invalid_locations": 0,
+        "requirements_correct": 0,
+        "total_requirements": 0,
+        "comments_count": 2,
+        "tokens_used": 1076,
+        "prompt_tokens": 581,
+        "output_tokens": 495,
+        "latency_seconds": 0.0283,
+        "estimated_cost_usd": 0.000192,
+        "findings": [
+          {
+            "id": "rev-001",
+            "file_path": "src/types/protocol.py",
+            "line": 3,
+            "end_line": null,
+            "label": "praise",
+            "decorations": [
+              "non-blocking"
+            ],
+            "subject": "Improved type annotations using modern Python syntax",
+            "description": "Replacing `typing.List` with `collections.abc.Sequence` broadens the accepted input to any sequence (tuples, etc.) while the return type `list[str]` accurately reflects the concrete list constructed in the body. The `str | None` union is clearer and avoids the deprecated `Optional` import.",
+            "severity": "low",
+            "blocking": false,
+            "requirement_ids": [],
+            "evidence_status": "model_inferred",
+            "review_status": "reported",
+            "suggested_action": "(Proposed remedy \u2014 model inferred): No action required; this is a positive modernization.",
+            "dedup_key": null
+          },
+          {
+            "id": "rev-002",
+            "file_path": "src/types/protocol.py",
+            "line": 3,
+            "end_line": null,
+            "label": "question",
+            "decorations": [
+              "non-blocking"
+            ],
+            "subject": "Confirm minimum supported Python version for PEP 604 syntax",
+            "description": "The `str | None` union syntax requires Python 3.10+ at runtime (or `from __future__ import annotations` for earlier versions). If the project still supports Python 3.9 or older, this change could break imports. The diff does not show a `from __future__ import annotations` import.",
+            "severity": "medium",
+            "blocking": false,
+            "requirement_ids": [],
+            "evidence_status": "model_inferred",
+            "review_status": "reported",
+            "suggested_action": "(Proposed remedy \u2014 model inferred): Verify the project's minimum Python version (e.g., in pyproject.toml or setup.cfg). If Python < 3.10 must be supported, add `from __future__ import annotations` or revert to `Optional[str]`.",
+            "dedup_key": null
+          }
+        ],
+        "assessments": [
+          {
+            "requirement_id": "NONE",
+            "source_file": null,
+            "text": "No requirement document supplied.",
+            "status": "not_assessed",
+            "explanation": "No requirements document was supplied; standard code quality review was performed.",
+            "related_finding_ids": [],
+            "related_locations": []
+          }
+        ]
+      }
+    },
+    {
+      "case_id": "held_out_03_multi_file_config_precedence",
+      "name": "Held-Out: Config Loading Inverts Precedence Over Defaults",
+      "split": "held_out",
+      "category": "multi_file_context",
+      "expected_verdict": "has_defects",
+      "expected_defects_count": 1,
+      "total_requirements": 0,
+      "variant_a": {
+        "variant_name": "variant_a",
+        "correct_findings": 1,
+        "false_positives": 0,
+        "false_positives_clean": 0,
+        "invalid_locations": 0,
+        "requirements_correct": 0,
+        "total_requirements": 0,
+        "comments_count": 1,
+        "tokens_used": 738,
+        "prompt_tokens": 448,
+        "output_tokens": 290,
+        "latency_seconds": 2.2011,
+        "estimated_cost_usd": 0.000121,
+        "findings": [
+          {
+            "file_path": "src/config/loader.py",
+            "line": 5,
+            "end_line": null,
+            "label": "issue",
+            "decorations": [
+              "blocking"
+            ],
+            "subject": "Default settings now override environment overrides",
+            "description": "Previously, DEFAULT_SETTINGS was copied and then updated with env_overrides, so caller-provided values took precedence. After this change, env_overrides is copied and then updated with DEFAULT_SETTINGS, meaning any key present in DEFAULT_SETTINGS silently replaces the override value. This inverts the documented/expected precedence of environment overrides and can cause configuration to ignore runtime settings.",
+            "severity": "high",
+            "blocking": true,
+            "requirement_ids": [],
+            "suggested_action": "Restore the original merge order: start from DEFAULT_SETTINGS.copy() and update with env_overrides so overrides win. If a different precedence is intended, document it explicitly and add tests covering overlapping keys."
+          }
+        ],
+        "assessments": []
+      },
+      "variant_b": {
+        "variant_name": "variant_b",
+        "correct_findings": 1,
+        "false_positives": 0,
+        "false_positives_clean": 0,
+        "invalid_locations": 0,
+        "requirements_correct": 0,
+        "total_requirements": 0,
+        "comments_count": 1,
+        "tokens_used": 962,
+        "prompt_tokens": 649,
+        "output_tokens": 313,
+        "latency_seconds": 1.8937,
+        "estimated_cost_usd": 0.000143,
+        "findings": [
+          {
+            "file_path": "src/config/loader.py",
+            "line": 5,
+            "end_line": null,
+            "label": "issue",
+            "decorations": [
+              "blocking",
+              "regression"
+            ],
+            "subject": "Merge order inverted: defaults override environment overrides",
+            "description": "Previously `result = DEFAULT_SETTINGS.copy()` followed by `result.update(env_overrides)` gave env_overrides precedence. The new code copies env_overrides and then updates with DEFAULT_SETTINGS, so any key in DEFAULT_SETTINGS (host, port, debug) overwrites the caller-supplied value. For example, `load_configuration({'port': 9090})` now returns port 8080 instead of 9090, silently ignoring environment configuration.",
+            "severity": "high",
+            "blocking": true,
+            "requirement_ids": [],
+            "suggested_action": "Restore the original precedence: start from DEFAULT_SETTINGS.copy() and update with env_overrides, i.e. `result = DEFAULT_SETTINGS.copy(); result.update(env_overrides)`."
+          }
+        ],
+        "assessments": []
+      },
+      "variant_c": {
+        "variant_name": "variant_c",
+        "correct_findings": 1,
+        "false_positives": 0,
+        "false_positives_clean": 0,
+        "invalid_locations": 0,
+        "requirements_correct": 0,
+        "total_requirements": 0,
+        "comments_count": 1,
+        "tokens_used": 983,
+        "prompt_tokens": 649,
+        "output_tokens": 334,
+        "latency_seconds": 2.1547,
+        "estimated_cost_usd": 0.000149,
+        "findings": [
+          {
+            "id": "rev-001",
+            "file_path": "src/config/loader.py",
+            "line": 5,
+            "end_line": null,
+            "label": "issue",
+            "decorations": [
+              "blocking",
+              "regression"
+            ],
+            "subject": "Environment overrides are overwritten by defaults due to inverted merge order",
+            "description": "Previously, `result` started as a copy of `DEFAULT_SETTINGS` and was updated with `env_overrides`, giving overrides precedence. Now `result` starts as a copy of `env_overrides` and is updated with `DEFAULT_SETTINGS`, so every key present in `DEFAULT_SETTINGS` (host, port, debug) is reset to its default value. Any caller-supplied override for those keys is silently discarded, which can cause production misconfiguration (e.g., wrong host/port) and is a clear regression.",
+            "severity": "high",
+            "blocking": true,
+            "requirement_ids": [],
+            "evidence_status": "model_inferred",
+            "review_status": "reported",
+            "suggested_action": "(Proposed remedy \u2014 model inferred): Restore the original precedence: `result = DEFAULT_SETTINGS.copy()` followed by `result.update(env_overrides)`. Add a unit test asserting that an override such as `{'port': 9090}` wins over the default.",
+            "dedup_key": null
+          }
+        ],
+        "assessments": [
+          {
+            "requirement_id": "NONE",
+            "source_file": null,
+            "text": "No requirement document supplied.",
+            "status": "not_assessed",
+            "explanation": "No requirements document was supplied; standard code quality review was performed.",
+            "related_finding_ids": [],
+            "related_locations": []
+          }
+        ]
+      },
+      "variant_replay": {
+        "variant_name": "variant_replay",
+        "correct_findings": 1,
+        "false_positives": 0,
+        "false_positives_clean": 0,
+        "invalid_locations": 0,
+        "requirements_correct": 0,
+        "total_requirements": 0,
+        "comments_count": 1,
+        "tokens_used": 962,
+        "prompt_tokens": 649,
+        "output_tokens": 313,
+        "latency_seconds": 0.0323,
+        "estimated_cost_usd": 0.000143,
+        "findings": [
+          {
+            "id": "rev-001",
+            "file_path": "src/config/loader.py",
+            "line": 5,
+            "end_line": null,
+            "label": "issue",
+            "decorations": [
+              "blocking",
+              "regression"
+            ],
+            "subject": "Merge order inverted: defaults override environment overrides",
+            "description": "Previously `result = DEFAULT_SETTINGS.copy()` followed by `result.update(env_overrides)` gave env_overrides precedence. The new code copies env_overrides and then updates with DEFAULT_SETTINGS, so any key in DEFAULT_SETTINGS (host, port, debug) overwrites the caller-supplied value. For example, `load_configuration({'port': 9090})` now returns port 8080 instead of 9090, silently ignoring environment configuration.",
+            "severity": "high",
+            "blocking": true,
+            "requirement_ids": [],
+            "evidence_status": "model_inferred",
+            "review_status": "reported",
+            "suggested_action": "(Proposed remedy \u2014 model inferred): Restore the original precedence: start from DEFAULT_SETTINGS.copy() and update with env_overrides, i.e. `result = DEFAULT_SETTINGS.copy(); result.update(env_overrides)`.",
+            "dedup_key": null
+          }
+        ],
+        "assessments": [
+          {
+            "requirement_id": "NONE",
+            "source_file": null,
+            "text": "No requirement document supplied.",
+            "status": "not_assessed",
+            "explanation": "No requirements document was supplied; standard code quality review was performed.",
+            "related_finding_ids": [],
+            "related_locations": []
+          }
+        ]
+      }
+    },
+    {
+      "case_id": "held_out_04_compensating_helper_auth",
+      "name": "Held-Out: Compensating Control in Imported Authorization Guard",
+      "split": "held_out",
+      "category": "compensating_control",
+      "expected_verdict": "clean",
+      "expected_defects_count": 0,
+      "total_requirements": 1,
+      "variant_a": {
+        "variant_name": "variant_a",
+        "correct_findings": 0,
+        "false_positives": 0,
+        "false_positives_clean": 0,
+        "invalid_locations": 0,
+        "requirements_correct": 0,
+        "total_requirements": 1,
+        "comments_count": 1,
+        "tokens_used": 893,
+        "prompt_tokens": 460,
+        "output_tokens": 433,
+        "latency_seconds": 2.5155,
+        "estimated_cost_usd": 0.000164,
+        "findings": [
+          {
+            "file_path": "src/views/profile.py",
+            "line": 4,
+            "end_line": null,
+            "label": "question",
+            "decorations": [],
+            "subject": "Guard behavior for inactive accounts is not visible in the diff",
+            "description": "`render_profile` calls `ensure_active_account(user)` but the diff does not include the implementation of that guard. If the guard does not raise `PermissionError` for inactive accounts (e.g., it returns a boolean, raises a different exception, or silently no-ops), REQ-AUTH-02 would not be met and inactive users could still receive the welcome message.",
+            "severity": "medium",
+            "blocking": false,
+            "requirement_ids": [
+              "REQ-AUTH-02"
+            ],
+            "suggested_action": "Confirm that `ensure_active_account` raises `PermissionError` when the account is inactive, or add an explicit check in `render_profile` that raises `PermissionError` for inactive users."
+          }
+        ],
+        "assessments": [
+          {
+            "requirement_id": "REQ-AUTH-02",
+            "status": "not_satisfied",
+            "explanation": "The diff shows `render_profile` delegating to `ensure_active_account(user)`, but the guard's implementation is not included in the change. There is no visible code in the diff that raises `PermissionError` for inactive accounts, so the requirement cannot be verified as satisfied from the provided evidence.",
+            "related_locations": [
+              "src/views/profile.py:4"
+            ]
+          }
+        ]
+      },
+      "variant_b": {
+        "variant_name": "variant_b",
+        "correct_findings": 0,
+        "false_positives": 0,
+        "false_positives_clean": 0,
+        "invalid_locations": 0,
+        "requirements_correct": 0,
+        "total_requirements": 1,
+        "comments_count": 1,
+        "tokens_used": 1048,
+        "prompt_tokens": 649,
+        "output_tokens": 399,
+        "latency_seconds": 2.4303,
+        "estimated_cost_usd": 0.000168,
+        "findings": [
+          {
+            "file_path": "src/views/profile.py",
+            "line": 5,
+            "end_line": null,
+            "label": "suggestion",
+            "decorations": [
+              "non-blocking"
+            ],
+            "subject": "Direct dict access for user name may raise KeyError",
+            "description": "`render_profile` uses `user[\"name\"]`, which raises `KeyError` if the user dict lacks a `name` key. The guard only validates `is_active`, so a malformed or partial user record would produce an unhandled exception rather than a controlled error.",
+            "severity": "low",
+            "blocking": false,
+            "requirement_ids": [],
+            "suggested_action": "Use `user.get(\"name\", \"\")` or validate the presence of `name` before formatting the welcome message."
+          }
+        ],
+        "assessments": [
+          {
+            "requirement_id": "REQ-AUTH-02",
+            "status": "satisfied",
+            "explanation": "`render_profile` calls `ensure_active_account(user)` at line 4 before rendering. The guard in `src/views/guards.py` raises `PermissionError('Account is inactive')` when `user.get('is_active', False)` is falsy, restricting inactive accounts as required.",
+            "related_locations": [
+              "src/views/profile.py:4",
+              "src/views/guards.py:2"
+            ]
+          }
+        ]
+      },
+      "variant_c": {
+        "variant_name": "variant_c",
+        "correct_findings": 0,
+        "false_positives": 0,
+        "false_positives_clean": 0,
+        "invalid_locations": 0,
+        "requirements_correct": 0,
+        "total_requirements": 1,
+        "comments_count": 0,
+        "tokens_used": 862,
+        "prompt_tokens": 647,
+        "output_tokens": 215,
+        "latency_seconds": 1.6451,
+        "estimated_cost_usd": 0.000113,
+        "findings": [],
+        "assessments": [
+          {
+            "requirement_id": "REQ-AUTH-02",
+            "source_file": "inline",
+            "text": "Profile view must restrict inactive accounts with PermissionError.",
+            "status": "unclear",
+            "explanation": "[Grounding: Model semantic inference | Citations: src/views/profile.py:4, src/views/guards.py:2] `render_profile` calls `ensure_active_account(user)` at line 4. The imported helper in `src/views/guards.py` raises `PermissionError('Account is inactive')` when `user.get('is_active', False)` is false, so inactive accounts are restricted as required.",
+            "related_finding_ids": [],
+            "related_locations": []
+          }
+        ]
+      },
+      "variant_replay": {
+        "variant_name": "variant_replay",
+        "correct_findings": 0,
+        "false_positives": 0,
+        "false_positives_clean": 0,
+        "invalid_locations": 0,
+        "requirements_correct": 0,
+        "total_requirements": 1,
+        "comments_count": 1,
+        "tokens_used": 1048,
+        "prompt_tokens": 649,
+        "output_tokens": 399,
+        "latency_seconds": 0.0214,
+        "estimated_cost_usd": 0.000168,
+        "findings": [
+          {
+            "id": "rev-001",
+            "file_path": "src/views/profile.py",
+            "line": 5,
+            "end_line": null,
+            "label": "suggestion",
+            "decorations": [
+              "non-blocking"
+            ],
+            "subject": "Direct dict access for user name may raise KeyError",
+            "description": "`render_profile` uses `user[\"name\"]`, which raises `KeyError` if the user dict lacks a `name` key. The guard only validates `is_active`, so a malformed or partial user record would produce an unhandled exception rather than a controlled error.",
+            "severity": "low",
+            "blocking": false,
+            "requirement_ids": [],
+            "evidence_status": "model_inferred",
+            "review_status": "reported",
+            "suggested_action": "(Proposed remedy \u2014 model inferred): Use `user.get(\"name\", \"\")` or validate the presence of `name` before formatting the welcome message.",
+            "dedup_key": null
+          }
+        ],
+        "assessments": [
+          {
+            "requirement_id": "REQ-AUTH-02",
+            "source_file": "inline",
+            "text": "Profile view must restrict inactive accounts with PermissionError.",
+            "status": "unclear",
+            "explanation": "[Grounding: Model semantic inference | Citations: src/views/profile.py:4, src/views/guards.py:2] `render_profile` calls `ensure_active_account(user)` at line 4 before rendering. The guard in `src/views/guards.py` raises `PermissionError('Account is inactive')` when `user.get('is_active', False)` is falsy, restricting inactive accounts as required.",
+            "related_finding_ids": [],
+            "related_locations": []
+          }
+        ]
+      }
+    },
+    {
+      "case_id": "held_out_05_ambiguous_partial_migration",
+      "name": "Held-Out: Partial Field Migration with Ambiguous Spec",
+      "split": "held_out",
+      "category": "ambiguous_requirement",
+      "expected_verdict": "unclear",
+      "expected_defects_count": 0,
+      "total_requirements": 1,
+      "variant_a": {
+        "variant_name": "variant_a",
+        "correct_findings": 0,
+        "false_positives": 0,
+        "false_positives_clean": 0,
+        "invalid_locations": 0,
+        "requirements_correct": 0,
+        "total_requirements": 1,
+        "comments_count": 2,
+        "tokens_used": 1064,
+        "prompt_tokens": 465,
+        "output_tokens": 599,
+        "latency_seconds": 3.4784,
+        "estimated_cost_usd": 0.000215,
+        "findings": [
+          {
+            "file_path": "src/models/account.py",
+            "line": 2,
+            "end_line": null,
+            "label": "suggestion",
+            "decorations": [
+              "non-blocking"
+            ],
+            "subject": "Silent fallback to legacy_id can hide unmigrated accounts",
+            "description": "The expression `account.get('uuid') or account.get('legacy_id') or 'unknown'` silently returns a legacy identifier when 'uuid' is missing or falsy. During the migration phase this can mask accounts that have not yet been assigned a UUID, making migration progress invisible to callers and potentially allowing legacy identifiers to propagate into new code paths.",
+            "severity": "medium",
+            "blocking": false,
+            "requirement_ids": [
+              "REQ-DATA-01"
+            ],
+            "suggested_action": "Consider logging or otherwise surfacing when the legacy_id fallback is used (e.g., a warning or metric), or make the fallback behavior explicit/configurable so migration gaps are observable."
+          },
+          {
+            "file_path": "src/models/account.py",
+            "line": 2,
+            "end_line": null,
+            "label": "question",
+            "decorations": [
+              "non-blocking"
+            ],
+            "subject": "No validation of UUID value",
+            "description": "The function returns `str(account.get('uuid'))` without checking that the UUID is a non-empty, well-formed value. An empty string or malformed UUID would be returned as-is (empty string is falsy and would fall through, but a malformed non-empty string would not).",
+            "severity": "low",
+            "blocking": false,
+            "requirement_ids": [
+              "REQ-DATA-01"
+            ],
+            "suggested_action": "If UUID format matters to callers, validate the UUID (e.g., via uuid.UUID parsing) and fall back or raise on invalid values."
+          }
+        ],
+        "assessments": [
+          {
+            "requirement_id": "REQ-DATA-01",
+            "status": "partially_satisfied",
+            "explanation": "The function now prefers the 'uuid' field, which supports adoption of UUID identifiers during migration. However, it still falls back to 'legacy_id' and does not validate or surface unmigrated accounts, so the migration is not fully enforced by this change.",
+            "related_locations": [
+              "src/models/account.py:2"
+            ]
+          }
+        ]
+      },
+      "variant_b": {
+        "variant_name": "variant_b",
+        "correct_findings": 0,
+        "false_positives": 1,
+        "false_positives_clean": 0,
+        "invalid_locations": 0,
+        "requirements_correct": 0,
+        "total_requirements": 1,
+        "comments_count": 2,
+        "tokens_used": 1184,
+        "prompt_tokens": 589,
+        "output_tokens": 595,
+        "latency_seconds": 3.383,
+        "estimated_cost_usd": 0.000223,
+        "findings": [
+          {
+            "file_path": "src/models/account.py",
+            "line": 3,
+            "end_line": null,
+            "label": "question",
+            "decorations": [
+              "non-blocking"
+            ],
+            "subject": "UUID vs legacy_id priority is unspecified",
+            "description": "The implementation prefers 'uuid' over 'legacy_id' via `account.get('uuid') or account.get('legacy_id')`. The surrounding comment on line 2 notes the specification does not state which identifier takes priority. If legacy_id is expected to remain authoritative during the migration phase, this ordering could return a UUID where a legacy identifier is required by downstream consumers.",
+            "severity": "medium",
+            "blocking": false,
+            "requirement_ids": [
+              "REQ-DATA-01"
+            ],
+            "suggested_action": "Confirm the intended priority order with the migration specification and document it in the function docstring or inline comment."
+          },
+          {
+            "file_path": "src/models/account.py",
+            "line": 3,
+            "end_line": null,
+            "label": "issue",
+            "decorations": [
+              "non-blocking"
+            ],
+            "subject": "Truthiness-based fallback treats empty UUID as missing",
+            "description": "Using `account.get('uuid') or account.get('legacy_id')` means an empty-string UUID (or other falsy value) silently falls back to legacy_id. If a UUID field is present but empty, the function returns a legacy identifier instead of surfacing the data issue, potentially masking incomplete migration records.",
+            "severity": "low",
+            "blocking": false,
+            "requirement_ids": [
+              "REQ-DATA-01"
+            ],
+            "suggested_action": "Use explicit None checks (e.g., `account.get('uuid') if account.get('uuid') is not None else ...`) or validate that UUID values are non-empty before falling back."
+          }
+        ],
+        "assessments": [
+          {
+            "requirement_id": "REQ-DATA-01",
+            "status": "satisfied",
+            "explanation": "The function now returns the account's UUID when present, preferring it over legacy_id, which supports adopting UUID identifiers during migration. The priority ambiguity and falsy-value handling are noted as non-blocking concerns but do not prevent the requirement from being met.",
+            "related_locations": [
+              "src/models/account.py:3"
+            ]
+          }
+        ]
+      },
+      "variant_c": {
+        "variant_name": "variant_c",
+        "correct_findings": 0,
+        "false_positives": 0,
+        "false_positives_clean": 0,
+        "invalid_locations": 0,
+        "requirements_correct": 0,
+        "total_requirements": 1,
+        "comments_count": 1,
+        "tokens_used": 1202,
+        "prompt_tokens": 586,
+        "output_tokens": 616,
+        "latency_seconds": 3.7885,
+        "estimated_cost_usd": 0.000229,
+        "findings": [
+          {
+            "id": "rev-002",
+            "file_path": "src/models/account.py",
+            "line": 3,
+            "end_line": null,
+            "label": "suggestion",
+            "decorations": [],
+            "subject": "Falsy UUID values fall through to legacy_id",
+            "description": "Using `or` means an empty-string uuid (or other falsy value) will fall back to legacy_id rather than being treated as a present-but-invalid identifier. This may mask data-quality issues during migration and produce inconsistent identifiers across accounts.\n\n*(Related perspective [question]: UUID vs legacy_id precedence is unspecified)*",
+            "severity": "low",
+            "blocking": false,
+            "requirement_ids": [
+              "REQ-DATA-01"
+            ],
+            "evidence_status": "model_inferred",
+            "review_status": "reported",
+            "suggested_action": "(Proposed remedy \u2014 model inferred): Consider explicit None checks (e.g., `account.get('uuid') if account.get('uuid') is not None else ...`) or validate/normalize UUIDs before falling back, so empty values are surfaced rather than silently ignored.",
+            "dedup_key": null
+          }
+        ],
+        "assessments": [
+          {
+            "requirement_id": "REQ-DATA-01",
+            "source_file": "inline",
+            "text": "Accounts should adopt UUID identifiers during the migration phase.",
+            "status": "partially_satisfied",
+            "explanation": "[Grounding: Model semantic inference | Citations: src/models/account.py:3] The change makes UUID the preferred identifier when present, which supports adopting UUID identifiers during migration. However, the precedence relative to legacy_id is not explicitly specified, and falsy UUID values silently fall back to legacy_id, so the migration behavior is not fully defined.",
+            "related_finding_ids": [
+              "rev-002"
+            ],
+            "related_locations": []
+          }
+        ]
+      },
+      "variant_replay": {
+        "variant_name": "variant_replay",
+        "correct_findings": 0,
+        "false_positives": 1,
+        "false_positives_clean": 0,
+        "invalid_locations": 0,
+        "requirements_correct": 0,
+        "total_requirements": 1,
+        "comments_count": 1,
+        "tokens_used": 1184,
+        "prompt_tokens": 589,
+        "output_tokens": 595,
+        "latency_seconds": 0.0497,
+        "estimated_cost_usd": 0.000223,
+        "findings": [
+          {
+            "id": "rev-002",
+            "file_path": "src/models/account.py",
+            "line": 3,
+            "end_line": null,
+            "label": "issue",
+            "decorations": [
+              "non-blocking"
+            ],
+            "subject": "Truthiness-based fallback treats empty UUID as missing",
+            "description": "Using `account.get('uuid') or account.get('legacy_id')` means an empty-string UUID (or other falsy value) silently falls back to legacy_id. If a UUID field is present but empty, the function returns a legacy identifier instead of surfacing the data issue, potentially masking incomplete migration records.\n\n*(Related perspective [question]: UUID vs legacy_id priority is unspecified)*",
+            "severity": "low",
+            "blocking": false,
+            "requirement_ids": [
+              "REQ-DATA-01"
+            ],
+            "evidence_status": "model_inferred",
+            "review_status": "reported",
+            "suggested_action": "(Proposed remedy \u2014 model inferred): Use explicit None checks (e.g., `account.get('uuid') if account.get('uuid') is not None else ...`) or validate that UUID values are non-empty before falling back.",
+            "dedup_key": null
+          }
+        ],
+        "assessments": [
+          {
+            "requirement_id": "REQ-DATA-01",
+            "source_file": "inline",
+            "text": "Accounts should adopt UUID identifiers during the migration phase.",
+            "status": "not_satisfied",
+            "explanation": "Requirement not satisfied: unresolved issue(s) identified (rev-002).",
+            "related_finding_ids": [
+              "rev-002"
+            ],
+            "related_locations": []
+          }
+        ]
+      }
+    },
+    {
+      "case_id": "held_out_06_exception_masking",
+      "name": "Held-Out: Broad Exception Masking Silences Persistence Failures",
+      "split": "held_out",
+      "category": "logic_regression",
+      "expected_verdict": "has_defects",
+      "expected_defects_count": 1,
+      "total_requirements": 0,
+      "variant_a": {
+        "variant_name": "variant_a",
+        "correct_findings": 1,
+        "false_positives": 0,
+        "false_positives_clean": 0,
+        "invalid_locations": 0,
+        "requirements_correct": 0,
+        "total_requirements": 0,
+        "comments_count": 2,
+        "tokens_used": 954,
+        "prompt_tokens": 454,
+        "output_tokens": 500,
+        "latency_seconds": 3.4371,
+        "estimated_cost_usd": 0.000184,
+        "findings": [
+          {
+            "file_path": "src/storage/client.py",
+            "line": 5,
+            "end_line": null,
+            "label": "issue",
+            "decorations": [
+              "blocking"
+            ],
+            "subject": "Bare except Exception silently swallows all audit log write failures",
+            "description": "The new try/except catches every Exception from database.write_record and returns False with no logging, re-raise, or error context. Callers cannot distinguish a transient database outage from a programming error (e.g., a malformed entry or a bug in write_record), and audit log loss becomes invisible. Because audit logs are typically compliance-relevant, silent loss is a high-impact behavior change.",
+            "severity": "high",
+            "blocking": true,
+            "requirement_ids": [],
+            "suggested_action": "Catch only expected database exceptions (e.g., a specific DatabaseError/ConnectionError type), log the failure with the entry context and traceback, and either re-raise or return a structured error. Avoid catching broad Exception unless the caller explicitly needs best-effort semantics, and document that contract."
+          },
+          {
+            "file_path": "src/storage/client.py",
+            "line": 6,
+            "end_line": null,
+            "label": "suggestion",
+            "decorations": [],
+            "subject": "Return value semantics changed without documentation",
+            "description": "Previously persist_audit_log returned True unconditionally after a successful write; now False indicates a swallowed failure. The function signature and docstring (none present) do not communicate this, so callers may ignore the boolean and assume persistence succeeded.",
+            "severity": "medium",
+            "blocking": false,
+            "requirement_ids": [],
+            "suggested_action": "Add a docstring documenting the return contract and failure modes, and consider whether callers should be forced to handle failure (e.g., raise instead of returning False)."
+          }
+        ],
+        "assessments": []
+      },
+      "variant_b": {
+        "variant_name": "variant_b",
+        "correct_findings": 1,
+        "false_positives": 0,
+        "false_positives_clean": 0,
+        "invalid_locations": 0,
+        "requirements_correct": 0,
+        "total_requirements": 0,
+        "comments_count": 2,
+        "tokens_used": 1087,
+        "prompt_tokens": 594,
+        "output_tokens": 493,
+        "latency_seconds": 3.351,
+        "estimated_cost_usd": 0.000192,
+        "findings": [
+          {
+            "file_path": "src/storage/client.py",
+            "line": 5,
+            "end_line": null,
+            "label": "issue",
+            "decorations": [
+              "blocking",
+              "security"
+            ],
+            "subject": "Bare except silently swallows all database write failures",
+            "description": "The new `except Exception:` block catches every exception from `database.write_record('audit', entry)` and returns False without logging, re-raising, or otherwise surfacing the error. Callers cannot distinguish a transient failure from a permanent one, and operators receive no signal that audit records are being dropped. For an audit log this can cause silent loss of compliance-relevant records and hides systemic database outages.",
+            "severity": "high",
+            "blocking": true,
+            "requirement_ids": [],
+            "suggested_action": "Catch only expected exception types (e.g., a specific DatabaseError), log the exception with context (entry identifier, exception details) at error level, and either re-raise or return a structured failure result. Avoid bare `except Exception` that discards the error."
+          },
+          {
+            "file_path": "src/storage/client.py",
+            "line": 6,
+            "end_line": null,
+            "label": "suggestion",
+            "decorations": [
+              "non-blocking"
+            ],
+            "subject": "Return value semantics are ambiguous for callers",
+            "description": "Returning False on failure without any accompanying error information forces callers to guess why persistence failed. If callers ignore the boolean, failures remain invisible; if they act on it, they lack the cause needed for retry or alerting decisions.",
+            "severity": "medium",
+            "blocking": false,
+            "requirement_ids": [],
+            "suggested_action": "Document the boolean contract and consider returning or raising a richer error (e.g., a result object or a custom exception) so callers can make informed retry/alerting decisions."
+          }
+        ],
+        "assessments": []
+      },
+      "variant_c": {
+        "variant_name": "variant_c",
+        "correct_findings": 1,
+        "false_positives": 0,
+        "false_positives_clean": 0,
+        "invalid_locations": 0,
+        "requirements_correct": 0,
+        "total_requirements": 0,
+        "comments_count": 2,
+        "tokens_used": 1099,
+        "prompt_tokens": 594,
+        "output_tokens": 505,
+        "latency_seconds": 3.509,
+        "estimated_cost_usd": 0.000196,
+        "findings": [
+          {
+            "id": "rev-001",
+            "file_path": "src/storage/client.py",
+            "line": 5,
+            "end_line": null,
+            "label": "issue",
+            "decorations": [
+              "blocking",
+              "security"
+            ],
+            "subject": "Broad exception handler silently masks all database failures",
+            "description": "The `except Exception:` block catches every exception from `database.write_record` and returns False without logging, re-raising, or otherwise surfacing the error. This means audit log write failures (e.g., connection loss, permission errors, disk full) become completely invisible to callers and operators. For an audit logging function, silent failure can lead to undetected loss of security-relevant records, violating auditability and making incident investigation impossible.",
+            "severity": "high",
+            "blocking": true,
+            "requirement_ids": [],
+            "evidence_status": "model_inferred",
+            "review_status": "reported",
+            "suggested_action": "(Proposed remedy \u2014 model inferred): Catch only expected exceptions (e.g., specific database exceptions) and log the error with context before returning False, or re-raise after logging. Consider using a logger and including the entry identifier and exception details. If the function must return a boolean, document the failure semantics and ensure callers can detect and handle failures.",
+            "dedup_key": null
+          },
+          {
+            "id": "rev-002",
+            "file_path": "src/storage/client.py",
+            "line": 6,
+            "end_line": null,
+            "label": "suggestion",
+            "decorations": [
+              "non-blocking"
+            ],
+            "subject": "Add logging for audit persistence failures",
+            "description": "The comment on line 6 explicitly notes that the error is silently ignored without logging. Even if returning False is desired, emitting a log record (e.g., via `logging.exception`) would preserve observability and allow monitoring/alerting on audit write failures.",
+            "severity": "medium",
+            "blocking": false,
+            "requirement_ids": [],
+            "evidence_status": "model_inferred",
+            "review_status": "reported",
+            "suggested_action": "(Proposed remedy \u2014 model inferred): Import the logging module and call `logger.exception('Failed to persist audit log entry')` inside the except block before returning False.",
+            "dedup_key": null
+          }
+        ],
+        "assessments": [
+          {
+            "requirement_id": "NONE",
+            "source_file": null,
+            "text": "No requirement document supplied.",
+            "status": "not_assessed",
+            "explanation": "No requirements document was supplied; standard code quality review was performed.",
+            "related_finding_ids": [],
+            "related_locations": []
+          }
+        ]
+      },
+      "variant_replay": {
+        "variant_name": "variant_replay",
+        "correct_findings": 1,
+        "false_positives": 0,
+        "false_positives_clean": 0,
+        "invalid_locations": 0,
+        "requirements_correct": 0,
+        "total_requirements": 0,
+        "comments_count": 2,
+        "tokens_used": 1087,
+        "prompt_tokens": 594,
+        "output_tokens": 493,
+        "latency_seconds": 0.0315,
+        "estimated_cost_usd": 0.000192,
+        "findings": [
+          {
+            "id": "rev-001",
+            "file_path": "src/storage/client.py",
+            "line": 5,
+            "end_line": null,
+            "label": "issue",
+            "decorations": [
+              "blocking",
+              "security"
+            ],
+            "subject": "Bare except silently swallows all database write failures",
+            "description": "The new `except Exception:` block catches every exception from `database.write_record('audit', entry)` and returns False without logging, re-raising, or otherwise surfacing the error. Callers cannot distinguish a transient failure from a permanent one, and operators receive no signal that audit records are being dropped. For an audit log this can cause silent loss of compliance-relevant records and hides systemic database outages.",
+            "severity": "high",
+            "blocking": true,
+            "requirement_ids": [],
+            "evidence_status": "model_inferred",
+            "review_status": "reported",
+            "suggested_action": "(Proposed remedy \u2014 model inferred): Catch only expected exception types (e.g., a specific DatabaseError), log the exception with context (entry identifier, exception details) at error level, and either re-raise or return a structured failure result. Avoid bare `except Exception` that discards the error.",
+            "dedup_key": null
+          },
+          {
+            "id": "rev-002",
+            "file_path": "src/storage/client.py",
+            "line": 6,
+            "end_line": null,
+            "label": "suggestion",
+            "decorations": [
+              "non-blocking"
+            ],
+            "subject": "Return value semantics are ambiguous for callers",
+            "description": "Returning False on failure without any accompanying error information forces callers to guess why persistence failed. If callers ignore the boolean, failures remain invisible; if they act on it, they lack the cause needed for retry or alerting decisions.",
+            "severity": "medium",
+            "blocking": false,
+            "requirement_ids": [],
+            "evidence_status": "model_inferred",
+            "review_status": "reported",
+            "suggested_action": "(Proposed remedy \u2014 model inferred): Document the boolean contract and consider returning or raising a richer error (e.g., a result object or a custom exception) so callers can make informed retry/alerting decisions.",
+            "dedup_key": null
+          }
+        ],
+        "assessments": [
+          {
+            "requirement_id": "NONE",
+            "source_file": null,
+            "text": "No requirement document supplied.",
+            "status": "not_assessed",
+            "explanation": "No requirements document was supplied; standard code quality review was performed.",
+            "related_finding_ids": [],
+            "related_locations": []
+          }
+        ]
+      }
+    }
+  ],
+  "release_recommendation": "NO-GO (Quality Criteria Not Met: Actionable precision (81.8%) < 85.0% threshold; Recall regression: VerifyCraft (90.0%) < Direct Context (100.0%))"
+}

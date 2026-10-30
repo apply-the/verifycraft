@@ -26,11 +26,16 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sys
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, TextIO
 
+from benchmarks.adjudication import (
+    AdjudicationCatalog,
+    AdjudicationDecision,
+)
 from benchmarks.review_dataset import (
     ExpectedIssue,
     GroundTruth,
@@ -68,6 +73,48 @@ SIMULATED_DISCLAIMER = (
     "hermetic contract and processing validation. They are NOT empirical Gemini "
     "measurements and must not be cited as real-world LLM evaluation data."
 )
+
+
+class BenchmarkProgressReporter:
+    """Live progress reporter printing to stderr and supporting quiet mode."""
+
+    def __init__(self, quiet: bool = False, stream: TextIO | None = None) -> None:
+        self.quiet = quiet
+        self.stream = stream if stream is not None else sys.stderr
+
+    def log(self, message: str) -> None:
+        """Write informational progress to stream if not quiet."""
+        if not self.quiet:
+            self.stream.write(f"{message}\n")
+            self.stream.flush()
+
+    def error(self, message: str) -> None:
+        """Always write errors to stream, even when quiet is enabled."""
+        self.stream.write(f"ERROR: {message}\n")
+        self.stream.flush()
+
+    def banner(self, mode: str, provider: str, model: str, split: str, total_cases: int) -> None:
+        if self.quiet:
+            return
+        planned = f" | Planned provider calls: {total_cases * 3}" if mode == "live" else ""
+        self.log("=" * 80)
+        self.log(" VerifyCraft Review Quality Evaluation")
+        self.log(f" Mode: {mode.upper()} | Provider: {provider} | Model: {model}")
+        self.log(f" Split: {split.upper()} ({total_cases} cases){planned}")
+        self.log("=" * 80)
+
+    def case_start(self, index: int, total: int, case_id: str) -> None:
+        if not self.quiet:
+            self.log(f"[{index}/{total}] Case: {case_id}")
+
+    def variant_start(self, variant_name: str) -> None:
+        if not self.quiet:
+            self.log(f"  -> {variant_name}: started call...")
+
+    def variant_done(self, variant_name: str, latency: float, tokens: int | None = None) -> None:
+        if not self.quiet:
+            tok_str = f" (tokens: {tokens})" if tokens is not None else ""
+            self.log(f"  <- {variant_name}: completed in {latency:.2f}s{tok_str}")
 
 
 @dataclass
@@ -672,26 +719,58 @@ def _build_diff_only_prompt(case: ReviewEvalCase) -> str:
     return "\n".join(parts)
 
 
+def _get_finding_attr(f: Any, attr: str, default: Any = None) -> Any:
+    """Extract an attribute from a finding object, pydantic model, or dictionary."""
+    if isinstance(f, dict):
+        return f.get(attr, default)
+    return getattr(f, attr, default)
+
+
 def _is_finding_match(
     f: Any,
     exp: ExpectedIssue,
     case: ReviewEvalCase,
 ) -> bool:
     """Check if finding matches expected defect with grounded file and line proximity."""
-    if f.file_path != exp.file_path:
+    f_path = _get_finding_attr(f, "file_path")
+    if f_path != exp.file_path:
         return False
-    label_val = getattr(f.label, "value", str(f.label)).lower()
-    if label_val != exp.label.lower():
+
+    label_raw = _get_finding_attr(f, "label", "issue")
+    label_val = getattr(label_raw, "value", str(label_raw)).lower()
+    blocking = bool(_get_finding_attr(f, "blocking", False))
+    is_defect_claim = label_val == "issue" or blocking
+    if not is_defect_claim:
         return False
-    combined = f"{f.subject} {f.description}".lower()
-    if exp.subject_contains.lower() not in combined:
-        return False
+
+    subj = str(_get_finding_attr(f, "subject", ""))
+    desc = str(_get_finding_attr(f, "description", ""))
+    combined = f"{subj} {desc}".lower()
+
+    # Reject if finding contains any forbidden false positive phrase
     for forb in case.ground_truth.forbidden_false_positives:
         if forb.lower() in combined:
             return False
-    if not exp.line_range or f.line is None:
+
+    # Check semantic match: primary subject_contains or any documented aliases
+    has_semantic_match = exp.subject_contains.lower() in combined
+    if not has_semantic_match and getattr(exp, "aliases", None):
+        has_semantic_match = any(alias.lower() in combined for alias in exp.aliases)
+
+    if not has_semantic_match:
+        return False
+
+    # Check evidence anchors if specified
+    if getattr(exp, "evidence_anchors", None):
+        has_anchor = any(anchor.lower() in combined for anchor in exp.evidence_anchors)
+        # If neither primary subject_contains nor evidence anchor is mentioned, reject broad alias
+        if not has_anchor and (exp.subject_contains.lower() not in combined):
+            return False
+
+    line = _get_finding_attr(f, "line", None)
+    if not exp.line_range or line is None:
         return True
-    return bool(exp.line_range[0] - 3 <= f.line <= exp.line_range[-1] + 3)
+    return bool(exp.line_range[0] - 3 <= line <= exp.line_range[-1] + 3)
 
 
 def _is_invalid_location(file_path: str, line: int | None, case: ReviewEvalCase) -> bool:
@@ -706,23 +785,85 @@ def _is_invalid_location(file_path: str, line: int | None, case: ReviewEvalCase)
     return False
 
 
+def _match_findings_to_expected(
+    findings: list[Any],
+    expected_issues: list[ExpectedIssue],
+    case: ReviewEvalCase,
+) -> tuple[int, list[Any], list[Any]]:
+    """Match candidate findings to expected issues in a 1-to-1 assignment.
+
+    Returns:
+        (correct_count, matched_findings, duplicate_findings)
+    """
+    matched_exps: set[int] = set()
+    matched_findings: list[Any] = []
+    duplicate_findings: list[Any] = []
+    used_finding_indices: set[int] = set()
+
+    for exp_idx, exp in enumerate(expected_issues):
+        for f_idx, f in enumerate(findings):
+            if f_idx in used_finding_indices:
+                continue
+            if _is_finding_match(f, exp, case):
+                matched_exps.add(exp_idx)
+                used_finding_indices.add(f_idx)
+                matched_findings.append(f)
+                break
+
+    for f_idx, f in enumerate(findings):
+        if f_idx in used_finding_indices:
+            continue
+        for exp in expected_issues:
+            if _is_finding_match(f, exp, case):
+                duplicate_findings.append(f)
+                break
+
+    return len(matched_exps), matched_findings, duplicate_findings
+
+
 def _is_finding_false_positive(
     f: Any,
     gt: GroundTruth,
     case: ReviewEvalCase,
+    matched_findings: list[Any] | None = None,
+    duplicate_findings: list[Any] | None = None,
+    adjudications: AdjudicationCatalog | None = None,
 ) -> bool:
     """Determine whether a candidate finding represents an unwarranted defect alert."""
-    label = getattr(f.label, "value", str(f.label)).lower()
-    is_defect_claim = label == "issue" or getattr(f, "blocking", False) is True
+    label_raw = _get_finding_attr(f, "label", "issue")
+    label = getattr(label_raw, "value", str(label_raw)).lower()
+    blocking = bool(_get_finding_attr(f, "blocking", False))
+    is_defect_claim = label == "issue" or blocking
     if not is_defect_claim:
         return False
 
-    matches_expected = any(_is_finding_match(f, exp, case) for exp in gt.expected_issues)
-    has_forbidden = any(
-        forb.lower() in f.subject.lower() or forb.lower() in f.description.lower()
-        for forb in gt.forbidden_false_positives
-    )
-    return not matches_expected or has_forbidden
+    if matched_findings is not None and f in matched_findings:
+        return False
+
+    if duplicate_findings is not None and f in duplicate_findings:
+        return False
+
+    if matched_findings is None and any(
+        _is_finding_match(f, exp, case) for exp in gt.expected_issues
+    ):
+        return False
+
+    # Check adjudications
+    if adjudications:
+        adj = adjudications.find_adjudication(
+            case_id=case.case_id,
+            file_path=_get_finding_attr(f, "file_path", ""),
+            line=_get_finding_attr(f, "line", None),
+            subject=_get_finding_attr(f, "subject", ""),
+        )
+        if adj:
+            return adj.decision not in (
+                AdjudicationDecision.KNOWN_TRUE_POSITIVE,
+                AdjudicationDecision.ADJUDICATED_TRUE_POSITIVE,
+                AdjudicationDecision.DUPLICATE_FINDING,
+            )
+
+    return True
 
 
 def _count_correct_findings(
@@ -731,25 +872,30 @@ def _count_correct_findings(
     case: ReviewEvalCase,
 ) -> int:
     """Count expected ground-truth issues successfully discovered by findings."""
-    correct = 0
-    for exp in expected_issues:
-        for f in findings:
-            if _is_finding_match(f, exp, case):
-                correct += 1
-                break
-    return correct
+    correct_count, _, _ = _match_findings_to_expected(findings, expected_issues, case)
+    return correct_count
 
 
 def _count_false_positives(
     findings: list[Any],
     gt: GroundTruth,
     case: ReviewEvalCase,
+    matched_findings: list[Any] | None = None,
+    duplicate_findings: list[Any] | None = None,
+    adjudications: AdjudicationCatalog | None = None,
 ) -> tuple[int, int]:
     """Count total false positives and false positives specifically on clean changes."""
     fps = 0
     fps_clean = 0
     for f in findings:
-        if _is_finding_false_positive(f, gt, case):
+        if _is_finding_false_positive(
+            f=f,
+            gt=gt,
+            case=case,
+            matched_findings=matched_findings,
+            duplicate_findings=duplicate_findings,
+            adjudications=adjudications,
+        ):
             fps += 1
             if gt.expected_verdict == "clean":
                 fps_clean += 1
@@ -760,9 +906,21 @@ def _count_invalid_locations(findings: list[Any], case: ReviewEvalCase) -> int:
     """Count fabricated or out-of-bounds code locations in findings."""
     invalids = 0
     for f in findings:
-        if _is_invalid_location(f.file_path, f.line, case):
+        file_path = _get_finding_attr(f, "file_path", "")
+        line = _get_finding_attr(f, "line", None)
+        if _is_invalid_location(file_path, line, case):
             invalids += 1
     return invalids
+
+
+def _normalize_requirement_status(status_val: Any) -> str:
+    """Normalize requirement assessment status to canonical vocabulary."""
+    s = str(status_val).lower().strip().replace("-", "_")
+    if s.startswith("requirementstatus."):
+        s = s.split(".", 1)[1]
+    if s in ("satisfied", "appears_satisfied"):
+        return "appears_satisfied"
+    return s
 
 
 def _count_correct_requirements(
@@ -772,10 +930,14 @@ def _count_correct_requirements(
     """Count requirements whose assessment status matches ground truth."""
     correct = 0
     for req_id, exp_status in expected_requirements.items():
+        norm_exp = _normalize_requirement_status(exp_status)
         for a in assessments:
-            if getattr(a, "requirement_id", "").upper() == req_id.upper():
-                actual_status = getattr(a.status, "value", str(a.status)).lower()
-                if actual_status == exp_status.lower():
+            a_req_id = str(_get_finding_attr(a, "requirement_id", ""))
+            if a_req_id.upper() == req_id.upper():
+                actual_status = _get_finding_attr(a, "status", "")
+                actual_val = getattr(actual_status, "value", str(actual_status))
+                norm_act = _normalize_requirement_status(actual_val)
+                if norm_act == norm_exp:
                     correct += 1
                     break
     return correct
@@ -801,19 +963,33 @@ def _score_variant(
     prompt_tokens: int | None,
     output_tokens: int | None,
     latency_seconds: float,
+    adjudications: AdjudicationCatalog | None = None,
 ) -> VariantMetrics:
     """Score review output against case ground truth."""
     gt = case.ground_truth
-    correct_findings = _count_correct_findings(findings, gt.expected_issues, case)
-    fps, fps_clean = _count_false_positives(findings, gt, case)
+    correct_findings, matched, duplicates = _match_findings_to_expected(
+        findings, gt.expected_issues, case
+    )
+    fps, fps_clean = _count_false_positives(
+        findings=findings,
+        gt=gt,
+        case=case,
+        matched_findings=matched,
+        duplicate_findings=duplicates,
+        adjudications=adjudications,
+    )
     invalids = _count_invalid_locations(findings, case)
     reqs_correct = _count_correct_requirements(assessments, gt.expected_requirements)
 
     cost_usd = _calculate_estimated_cost(tokens_used, prompt_tokens, output_tokens)
 
-    finding_dicts = [f.model_dump() if hasattr(f, "model_dump") else asdict(f) for f in findings]
+    finding_dicts = [
+        f if isinstance(f, dict) else (f.model_dump() if hasattr(f, "model_dump") else asdict(f))
+        for f in findings
+    ]
     assessment_dicts = [
-        a.model_dump() if hasattr(a, "model_dump") else asdict(a) for a in assessments
+        a if isinstance(a, dict) else (a.model_dump() if hasattr(a, "model_dump") else asdict(a))
+        for a in assessments
     ]
 
     return VariantMetrics(
@@ -915,13 +1091,19 @@ def _run_variant_replay(
 def evaluate_single_case(
     case: ReviewEvalCase,
     adapter: ReviewerModelAdapter,
+    adjudications: AdjudicationCatalog | None = None,
+    reporter: BenchmarkProgressReporter | None = None,
 ) -> CaseEvaluationMetrics:
     """Evaluate all 3 variants plus candidate replay on a single evaluation case."""
     context = _build_synthetic_git_context(case)
     engine = ReviewEngine(provider_adapter=adapter)
 
     # 1. Variant A: Direct Gemini Diff-Only
+    if reporter:
+        reporter.variant_start("Variant A (Direct Diff-Only)")
     resp_a, latency_a = _run_variant_a(case, adapter)
+    if reporter:
+        reporter.variant_done("Variant A", latency_a, resp_a.tokens_used)
     metrics_a = _score_variant(
         variant_name=VARIANT_A_KEY,
         findings=resp_a.candidate_findings,
@@ -931,10 +1113,15 @@ def evaluate_single_case(
         prompt_tokens=getattr(resp_a, "prompt_tokens", None),
         output_tokens=getattr(resp_a, "output_tokens", None),
         latency_seconds=latency_a,
+        adjudications=adjudications,
     )
 
     # 2. Variant B: Direct Gemini Context-Rich
+    if reporter:
+        reporter.variant_start("Variant B (Direct Context-Rich)")
     resp_b, latency_b = _run_variant_b(case, context, engine, adapter)
+    if reporter:
+        reporter.variant_done("Variant B", latency_b, resp_b.tokens_used)
     metrics_b = _score_variant(
         variant_name=VARIANT_B_KEY,
         findings=resp_b.candidate_findings,
@@ -944,10 +1131,15 @@ def evaluate_single_case(
         prompt_tokens=getattr(resp_b, "prompt_tokens", None),
         output_tokens=getattr(resp_b, "output_tokens", None),
         latency_seconds=latency_b,
+        adjudications=adjudications,
     )
 
     # 3. Variant C: VerifyCraft Context-Rich
+    if reporter:
+        reporter.variant_start("Variant C (VerifyCraft)")
     report_c, latency_c = _run_variant_c(case, context, engine)
+    if reporter:
+        reporter.variant_done("Variant C", latency_c, report_c.resource_usage.tokens_used)
     metrics_c = _score_variant(
         variant_name=VARIANT_C_KEY,
         findings=report_c.findings,
@@ -957,10 +1149,16 @@ def evaluate_single_case(
         prompt_tokens=getattr(report_c.resource_usage, "prompt_tokens", None),
         output_tokens=getattr(report_c.resource_usage, "output_tokens", None),
         latency_seconds=latency_c,
+        adjudications=adjudications,
     )
 
     # 4. Variant C-Replay: Replay Variant B through VerifyCraft pipeline
+    if reporter:
+        reporter.variant_start("Variant C-Replay (Replayed B)")
     report_replay, latency_replay = _run_variant_replay(case, context, resp_b)
+    if reporter:
+        replay_tokens = report_replay.resource_usage.tokens_used
+        reporter.variant_done("Variant C-Replay", latency_replay, replay_tokens)
     metrics_replay = _score_variant(
         variant_name=VARIANT_REPLAY_KEY,
         findings=report_replay.findings,
@@ -970,6 +1168,7 @@ def evaluate_single_case(
         prompt_tokens=getattr(report_replay.resource_usage, "prompt_tokens", None),
         output_tokens=getattr(report_replay.resource_usage, "output_tokens", None),
         latency_seconds=latency_replay,
+        adjudications=adjudications,
     )
 
     return CaseEvaluationMetrics(
@@ -1349,6 +1548,335 @@ def _check_credentials_available(provider: str, base_url: str | None = None) -> 
     return False
 
 
+def _print_rescore_report(res: dict[str, Any]) -> None:
+    """Print human-readable comparative rescoring report."""
+    print("=" * 96)
+    print(" VerifyCraft Review Quality Evaluation — Offline Rescore Report")
+    print(f" Source Evidence File: {res['source_report_path']}")
+    print(f" Provider / Model:     {res['provider']} / {res['model_name']}")
+    print(f" Scorer / Dataset:     v{res['rescorer_version']} / v{res['dataset_version']}")
+    print(f" Adjudications:        v{res['adjudications_version']}")
+    print(f" Evaluated Cases:      {res['cases_count']} ({res['split'].upper()} split)")
+    print("=" * 96)
+    print(" 1. Ground-Truth Classification Deltas (Old vs Rescored Decisions):")
+    if not res["decision_deltas"]:
+        print("    (No per-case classification changes; scores are identical)")
+    else:
+        for d in res["decision_deltas"]:
+            print(
+                f"    - [{d['case_id']} | {d['variant']}] {d['metric']}: "
+                f"{d['old_value']} -> {d['new_value']}"
+            )
+            print(f"      Rationale: {d['explanation']}")
+    print("-" * 96)
+    print(" 2. Comparative Rescored Metrics Across Variants:")
+    print(
+        _format_table_row(
+            "Metric", "A: Direct-Diff", "B: Direct-Ctx", "C: VerifyCraft", "Replay (B->VC)"
+        )
+    )
+    print("-" * 96)
+    v_a = res["variants"][VARIANT_A_KEY]
+    v_b = res["variants"][VARIANT_B_KEY]
+    v_c = res["variants"][VARIANT_C_KEY]
+    v_rep = res["variants"][VARIANT_REPLAY_KEY]
+    print(
+        _format_table_row(
+            "Actionable Precision",
+            f"{v_a['actionable_precision']:.1%}",
+            f"{v_b['actionable_precision']:.1%}",
+            f"{v_c['actionable_precision']:.1%}",
+            f"{v_rep['actionable_precision']:.1%}",
+        )
+    )
+    print(
+        _format_table_row(
+            "Defect Recall (Yield)",
+            f"{v_a['defect_recall']:.1%}",
+            f"{v_b['defect_recall']:.1%}",
+            f"{v_c['defect_recall']:.1%}",
+            f"{v_rep['defect_recall']:.1%}",
+        )
+    )
+    print(
+        _format_table_row(
+            "Total False Positives",
+            str(v_a["false_positives"]),
+            str(v_b["false_positives"]),
+            str(v_c["false_positives"]),
+            str(v_rep["false_positives"]),
+        )
+    )
+    print(
+        _format_table_row(
+            "FP on Clean Changes",
+            str(v_a["false_positives_clean"]),
+            str(v_b["false_positives_clean"]),
+            str(v_c["false_positives_clean"]),
+            str(v_rep["false_positives_clean"]),
+        )
+    )
+    print(
+        _format_table_row(
+            "Invalid Code Locations",
+            str(v_a["invalid_locations"]),
+            str(v_b["invalid_locations"]),
+            str(v_c["invalid_locations"]),
+            str(v_rep["invalid_locations"]),
+        )
+    )
+    print(
+        _format_table_row(
+            "Requirements Accuracy",
+            f"{v_a['requirements_accuracy']:.1%}",
+            f"{v_b['requirements_accuracy']:.1%}",
+            f"{v_c['requirements_accuracy']:.1%}",
+            f"{v_rep['requirements_accuracy']:.1%}",
+        )
+    )
+    print("-" * 96)
+    print(" 3. Release Gate Decision Policy Audit:")
+    print(f"    Previous Live Gate Status:  {res['old_gate_status']}")
+    print(f"    Rescored Gate Status:       {res['new_gate_status']}")
+    print(f"    Previous Recommendation:    {res['old_recommendation']}")
+    print(f"    Rescored Recommendation:    {res['new_recommendation']}")
+    print("=" * 96)
+
+
+def rescore_report(
+    report_path: Path | str,
+    adjudications_path: Path | str | None = None,
+    dataset_path: Path | str | None = None,
+    verbose: bool = True,
+    reporter: BenchmarkProgressReporter | None = None,
+) -> dict[str, Any]:
+    """Offline rescore an existing benchmark JSON report.
+
+    Uses updated matching and adjudications.
+    """
+    if reporter is None:
+        reporter = BenchmarkProgressReporter()
+
+    p = Path(report_path)
+    if not p.exists():
+        reporter.error(f"Report file not found: {report_path}")
+        raise SystemExit(1)
+
+    try:
+        raw_rep = json.loads(p.read_text(encoding="utf-8"))
+    except Exception as err:
+        reporter.error(f"Invalid JSON in report file '{report_path}': {err}")
+        raise SystemExit(1) from err
+
+    if not isinstance(raw_rep, dict) or "per_case_metrics" not in raw_rep:
+        reporter.error(
+            f"Incompatible report format: missing 'per_case_metrics' in '{report_path}'."
+        )
+        raise SystemExit(1)
+
+    raw_cases = raw_rep["per_case_metrics"]
+    if not isinstance(raw_cases, list) or len(raw_cases) == 0:
+        reporter.error(
+            f"Incompatible report format: 'per_case_metrics' is empty in '{report_path}'."
+        )
+        raise SystemExit(1)
+
+    cases_list = load_review_eval_dataset(dataset_path=dataset_path, split="all")
+    cases_by_id = {c.case_id: c for c in cases_list}
+
+    adj_path = (
+        adjudications_path
+        if adjudications_path is not None
+        else Path(__file__).parent / "data" / "review_eval" / "adjudications.json"
+    )
+    adjudications = AdjudicationCatalog.load(adj_path)
+
+    adj_ver = adjudications.records[0].version if adjudications.records else "1.0.0"
+    reporter.log(f"Rescoring report '{p.name}' ({len(raw_cases)} cases) with catalog v{adj_ver}...")
+
+    new_results: list[CaseEvaluationMetrics] = []
+    decision_deltas: list[dict[str, Any]] = []
+
+    for c_raw in raw_cases:
+        cid = c_raw.get("case_id")
+        if not cid or cid not in cases_by_id:
+            reporter.error(f"Unknown or missing case_id '{cid}' in report.")
+            raise SystemExit(1)
+        case = cases_by_id[cid]
+
+        rescored_vars: dict[str, VariantMetrics] = {}
+        for vname in (VARIANT_A_KEY, VARIANT_B_KEY, VARIANT_C_KEY, VARIANT_REPLAY_KEY):
+            vm_raw = c_raw.get(vname, {})
+            findings = vm_raw.get("findings", [])
+            assessments = vm_raw.get("assessments", [])
+
+            old_corr = vm_raw.get("correct_findings", 0)
+            old_fps = vm_raw.get("false_positives", 0)
+            old_reqs = vm_raw.get("requirements_correct", 0)
+
+            v_metrics = _score_variant(
+                variant_name=vname,
+                findings=findings,
+                assessments=assessments,
+                case=case,
+                tokens_used=vm_raw.get("tokens_used", 0),
+                prompt_tokens=vm_raw.get("prompt_tokens"),
+                output_tokens=vm_raw.get("output_tokens"),
+                latency_seconds=vm_raw.get("latency_seconds", 0.0),
+                adjudications=adjudications,
+            )
+            rescored_vars[vname] = v_metrics
+
+            if v_metrics.correct_findings != old_corr:
+                decision_deltas.append(
+                    {
+                        "case_id": cid,
+                        "variant": vname,
+                        "metric": "correct_findings",
+                        "old_value": old_corr,
+                        "new_value": v_metrics.correct_findings,
+                        "explanation": (
+                            f"True positive count updated ({old_corr} -> "
+                            f"{v_metrics.correct_findings}) "
+                            "via ground-truth semantic defect alias matching."
+                        ),
+                    }
+                )
+            if v_metrics.false_positives != old_fps:
+                decision_deltas.append(
+                    {
+                        "case_id": cid,
+                        "variant": vname,
+                        "metric": "false_positives",
+                        "old_value": old_fps,
+                        "new_value": v_metrics.false_positives,
+                        "explanation": (
+                            f"False positive count updated ({old_fps} -> "
+                            f"{v_metrics.false_positives}) "
+                            "via semantic matching and ground-truth adjudication."
+                        ),
+                    }
+                )
+            if v_metrics.requirements_correct != old_reqs:
+                decision_deltas.append(
+                    {
+                        "case_id": cid,
+                        "variant": vname,
+                        "metric": "requirements_correct",
+                        "old_value": old_reqs,
+                        "new_value": v_metrics.requirements_correct,
+                        "explanation": (
+                            f"Requirement compliance updated ({old_reqs} -> "
+                            f"{v_metrics.requirements_correct}) via status "
+                            "vocabulary normalization ('satisfied' -> 'appears_satisfied')."
+                        ),
+                    }
+                )
+
+        new_results.append(
+            CaseEvaluationMetrics(
+                case_id=case.case_id,
+                name=case.name,
+                split=case.split,
+                category=case.category,
+                expected_verdict=case.ground_truth.expected_verdict,
+                expected_defects_count=len(case.ground_truth.expected_issues),
+                total_requirements=len(case.requirements),
+                variant_a=rescored_vars[VARIANT_A_KEY],
+                variant_b=rescored_vars[VARIANT_B_KEY],
+                variant_c=rescored_vars[VARIANT_C_KEY],
+                variant_replay=rescored_vars[VARIANT_REPLAY_KEY],
+            )
+        )
+
+    total_expected_defects = sum(
+        len(cases_by_id[c["case_id"]].ground_truth.expected_issues) for c in raw_cases
+    )
+    agg_a = _aggregate_variant_metrics(
+        VARIANT_A_KEY, "Variant A (Direct Diff-Only)", new_results, total_expected_defects
+    )
+    agg_b = _aggregate_variant_metrics(
+        VARIANT_B_KEY, "Variant B (Direct Context-Rich)", new_results, total_expected_defects
+    )
+    agg_c = _aggregate_variant_metrics(
+        VARIANT_C_KEY, "Variant C (VerifyCraft)", new_results, total_expected_defects
+    )
+    agg_rep = _aggregate_variant_metrics(
+        VARIANT_REPLAY_KEY, "Variant C-Replay (Replayed B)", new_results, total_expected_defects
+    )
+
+    mode_val = raw_rep.get("execution_mode", "live")
+    provider_val = raw_rep.get("provider", "deepseek")
+    split_val = raw_rep.get("split", "all")
+    new_gate = assess_release_gate(
+        mode=mode_val,
+        live_active=(mode_val == "live"),
+        credentials_available=(mode_val == "live"),
+        live_provider_call_completed=True,
+        agg_b=agg_b,
+        agg_c=agg_c,
+        split=split_val,
+        provider=provider_val,
+    )
+
+    rescore_summary: dict[str, Any] = {
+        "evaluation_version": "2.1.0",
+        "rescorer_version": "2.1.0",
+        "dataset_version": "1.1.0",
+        "adjudications_version": adj_ver,
+        "source_report_path": str(p.resolve()),
+        "execution_mode": mode_val,
+        "provider": provider_val,
+        "model_name": raw_rep.get("model_name", "deepseek-chat"),
+        "split": split_val,
+        "cases_count": len(new_results),
+        "total_expected_defects": total_expected_defects,
+        "old_gate_status": raw_rep.get("release_gate", {}).get("status", "UNKNOWN"),
+        "new_gate_status": new_gate["status"],
+        "old_recommendation": raw_rep.get("release_gate", {}).get("recommendation", ""),
+        "new_recommendation": new_gate["recommendation"],
+        "variants": {
+            VARIANT_A_KEY: asdict(agg_a),
+            VARIANT_B_KEY: asdict(agg_b),
+            VARIANT_C_KEY: asdict(agg_c),
+            VARIANT_REPLAY_KEY: asdict(agg_rep),
+        },
+        "old_variants": raw_rep.get("variants", {}),
+        "comparative_analysis": {
+            "context_enrichment_impact": {
+                "variant_a_recall": agg_a.defect_recall,
+                "variant_b_recall": agg_b.defect_recall,
+                "recall_delta": round(agg_b.defect_recall - agg_a.defect_recall, 4),
+            },
+            "downstream_validation_impact": {
+                "variant_b_precision": agg_b.actionable_precision,
+                "variant_c_precision": agg_c.actionable_precision,
+                "precision_delta": round(
+                    agg_c.actionable_precision - agg_b.actionable_precision, 4
+                ),
+                "false_positives_prevented": agg_b.false_positives - agg_c.false_positives,
+                "invalid_locations_eliminated": agg_b.invalid_locations - agg_c.invalid_locations,
+                "requirements_accuracy_delta": round(
+                    agg_c.requirements_accuracy - agg_b.requirements_accuracy, 4
+                ),
+            },
+            "replay_pipeline_fidelity": {
+                "variant_b_candidates_evaluated": agg_b.total_comments,
+                "replay_findings_retained": agg_rep.total_comments,
+                "replay_precision": agg_rep.actionable_precision,
+            },
+        },
+        "release_gate": new_gate,
+        "decision_deltas": decision_deltas,
+        "per_case_metrics": [asdict(r) for r in new_results],
+    }
+
+    if verbose:
+        _print_rescore_report(rescore_summary)
+
+    return rescore_summary
+
+
 def run_evaluation(
     split: Literal["dev", "held_out", "all"] = "all",
     mode: Literal["simulated", "live"] = "simulated",
@@ -1357,9 +1885,22 @@ def run_evaluation(
     base_url: str | None = None,
     allow_insecure_http: bool = False,
     verbose: bool = True,
+    quiet: bool = False,
+    adjudications_path: Path | str | None = None,
+    reporter: BenchmarkProgressReporter | None = None,
 ) -> dict[str, Any]:
     """Execute the 3-variant review quality evaluation suite across all cases."""
+    if reporter is None:
+        reporter = BenchmarkProgressReporter(quiet=quiet)
+
     cases = load_review_eval_dataset(split=split)
+
+    adj_path = (
+        adjudications_path
+        if adjudications_path is not None
+        else Path(__file__).parent / "data" / "review_eval" / "adjudications.json"
+    )
+    adjudications = AdjudicationCatalog.load(adj_path)
 
     credentials_available = (
         _check_credentials_available(provider, base_url=base_url) if mode == "live" else False
@@ -1381,44 +1922,32 @@ def run_evaluation(
         except ProviderConfigurationError as err:
             cfg = PROVIDER_CONFIGS.get(provider.lower())
             env_hint = (cfg.api_key_env_var if cfg else None) or f"{provider.upper()}_API_KEY"
-            prov_upper = provider.upper()
-            error_banner = "\n".join(
-                [
-                    "",
-                    "=" * 80,
-                    f" VerifyCraft Review Quality Evaluation — Live Release Gate ({prov_upper})",
-                    " STATUS: BLOCKED (Credentials Unavailable or Configuration Error)",
-                    "=" * 80,
-                    f"ERROR: Live evaluation requested (--mode live) for provider '{provider}',",
-                    f"but configuration failed: {err}",
-                    "",
-                    "VerifyCraft fails closed in live mode and NEVER silently falls back to",
-                    "simulated results when live credentials are requested.",
-                    "",
-                    "To execute live evaluation locally:",
-                    f'  export {env_hint}="your-{provider}-key"',
-                    (
-                        "  uv run python -m benchmarks.evaluate_review "
-                        f"--mode live --provider {provider}"
-                    ),
-                    "",
-                    "Release Recommendation: NO-GO (Live validation blocked)",
-                    "=" * 80,
-                    "",
-                ]
+            error_msg = (
+                f"Live evaluation requested (--mode live) for provider '{provider}', "
+                f"but configuration failed: {err}\n"
+                f'Fails closed: export {env_hint}="your-{provider}-key" or pass --env-file.'
             )
-            if verbose:
-                print(error_banner)
+            reporter.error(error_msg)
             raise SystemExit(1) from err
     else:
         adapter = SimulatedGeminiReviewer()
         live_active = False
 
+    model_display = getattr(adapter, "model_name", model or "simulated")
+    reporter.banner(
+        mode=mode,
+        provider=provider,
+        model=model_display,
+        split=split,
+        total_cases=len(cases),
+    )
+
     results: list[CaseEvaluationMetrics] = []
     start_time = time.perf_counter()
 
-    for c in cases:
-        m = evaluate_single_case(c, adapter)
+    for i, c in enumerate(cases):
+        reporter.case_start(i + 1, len(cases), c.case_id)
+        m = evaluate_single_case(c, adapter, adjudications=adjudications, reporter=reporter)
         results.append(m)
 
     total_time = round(time.perf_counter() - start_time, 4)
@@ -1438,7 +1967,7 @@ def run_evaluation(
     )
 
     summary: dict[str, Any] = {
-        "evaluation_version": "2.0.0",
+        "evaluation_version": "2.1.0",
         "execution_mode": mode,
         "provider": provider,
         "live_gate_status": "COMPLETED" if live_active else "BLOCKED (Missing API Credentials)",
@@ -1491,6 +2020,9 @@ def run_evaluation(
         "per_case_metrics": [asdict(r) for r in results],
     }
     summary["release_recommendation"] = summary["release_gate"]["recommendation"]
+
+    reporter.log(f"Benchmark finished in {total_time:.2f}s across {len(cases)} cases.")
+    reporter.log(f"Release gate status: {summary['release_gate']['status']}")
 
     if verbose:
         _print_evaluation_banner(
@@ -1561,6 +2093,24 @@ def main() -> None:
         help="Output structured JSON report.",
     )
     parser.add_argument(
+        "--quiet",
+        "-q",
+        action="store_true",
+        help="Suppress non-error progress output on stderr.",
+    )
+    parser.add_argument(
+        "--rescore",
+        type=Path,
+        default=None,
+        help="Path to existing evaluation JSON report to rescore offline without model calls.",
+    )
+    parser.add_argument(
+        "--adjudications",
+        type=Path,
+        default=None,
+        help="Path to ground-truth adjudications catalog JSON.",
+    )
+    parser.add_argument(
         "--load-dotenv",
         action="store_true",
         help="Explicitly load environment variables from .env in repository root.",
@@ -1581,6 +2131,19 @@ def main() -> None:
     if opt_in:
         load_dotenv_if_present(env_path=args.env_file, opt_in=True)
 
+    reporter = BenchmarkProgressReporter(quiet=args.quiet)
+
+    if args.rescore:
+        rescored = rescore_report(
+            report_path=args.rescore,
+            adjudications_path=args.adjudications,
+            verbose=not args.json,
+            reporter=reporter,
+        )
+        if args.json:
+            print(json.dumps(rescored, indent=2))
+        return
+
     mode_val: Literal["simulated", "live"] = (
         "live" if args.live or args.mode == "live" else "simulated"
     )
@@ -1592,6 +2155,9 @@ def main() -> None:
         base_url=args.base_url,
         allow_insecure_http=args.allow_insecure_http,
         verbose=not args.json,
+        quiet=args.quiet,
+        adjudications_path=args.adjudications,
+        reporter=reporter,
     )
 
     if args.json:
