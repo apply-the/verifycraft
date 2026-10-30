@@ -876,6 +876,8 @@ class ReviewEngine:
         context_window: int = 25,
     ) -> str:
         """Format a changed file with 1-indexed line numbers and bounded surrounding context."""
+        if cfile.prompt_context is not None:
+            return cfile.prompt_context
         if not cfile.content:
             return "(Empty file)"
 

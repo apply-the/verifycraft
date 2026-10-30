@@ -802,7 +802,8 @@ def test_semantic_anchor_def_and_context_slice() -> None:
     )
     assert line == 3
 
-    # Slice match (def match prioritizes def line 3)
+    # Slice match: line 4 is within 2 lines of helper_func (line 3)
+    # Valid anchor line 4 is retained!
     line_slice, reason_slice = collector.validate_semantic_anchor(
         file_path="src/example.py",
         line=4,
@@ -810,7 +811,7 @@ def test_semantic_anchor_def_and_context_slice() -> None:
         description="Details about `helper_func`",
         changed_files=changed,
     )
-    assert line_slice == 3
+    assert line_slice == 4
 
 
 def test_bounded_diff_acquisition_coverage_branches() -> None:
@@ -862,11 +863,28 @@ def test_populate_file_contents_windowing_and_overflow() -> None:
         total = collector._populate_file_contents(
             changed_files={"src/big.py": cfile},
             head_revision="HEAD",
-            max_context_bytes=2048,
+            max_context_bytes=6000,
             omitted_scope=omitted,
         )
         assert total > 0
         assert any("bounded to changed hunk windows" in note for note in omitted)
+
+        # Tight window fallback when budget is tighter
+        omitted_tight: list[str] = []
+        cfile_tight = ChangedFile(
+            path="src/big.py",
+            status="modified",
+            changed_lines={50},
+            hunks=[DiffHunk(old_start=45, old_lines=10, new_start=45, new_lines=10, content="...")],
+        )
+        total_tight = collector._populate_file_contents(
+            changed_files={"src/big.py": cfile_tight},
+            head_revision="HEAD",
+            max_context_bytes=2048,
+            omitted_scope=omitted_tight,
+        )
+        assert total_tight > 0
+        assert any("bounded to tight hunk windows" in note for note in omitted_tight)
 
         # Context limit overflow
         omitted_overflow: list[str] = []

@@ -35,6 +35,49 @@ class ChangedFile:
     changed_lines: set[int] = field(default_factory=set)
     hunks: list[DiffHunk] = field(default_factory=list)
     content: str | None = None
+    prompt_context: str | None = None
+
+
+def merge_line_intervals(intervals: list[tuple[int, int]]) -> list[tuple[int, int]]:
+    """Sort and merge overlapping or adjacent (start, end) line intervals."""
+    if not intervals:
+        return []
+    sorted_intervals = sorted(intervals, key=lambda x: x[0])
+    merged: list[tuple[int, int]] = [sorted_intervals[0]]
+    for start, end in sorted_intervals[1:]:
+        prev_start, prev_end = merged[-1]
+        if start <= prev_end + 1:
+            merged[-1] = (prev_start, max(prev_end, end))
+        else:
+            merged.append((start, end))
+    return merged
+
+
+def render_windowed_source_context(
+    lines: list[str], intervals: list[tuple[int, int]], total_lines: int
+) -> str:
+    """Render 1-indexed source lines with original line numbers and omission markers."""
+    merged = merge_line_intervals(intervals)
+    formatted_chunks: list[str] = []
+    prev_end = 0
+    for start, end in merged:
+        if prev_end > 0 and start > prev_end + 1:
+            omitted = start - prev_end - 1
+            formatted_chunks.append(
+                f"... [{omitted} surrounding lines omitted for brevity "
+                f"(lines {prev_end + 1}-{start - 1}); see diff] ..."
+            )
+        for i in range(start, end + 1):
+            formatted_chunks.append(f"{i}: {lines[i - 1]}")
+        prev_end = end
+
+    if prev_end < total_lines:
+        omitted = total_lines - prev_end
+        formatted_chunks.append(
+            f"... [{omitted} trailing lines omitted for brevity "
+            f"(lines {prev_end + 1}-{total_lines}); see diff] ..."
+        )
+    return "\n".join(formatted_chunks)
 
 
 @dataclass
@@ -551,37 +594,70 @@ class GitContextCollector:
             if cfile.status == "deleted":
                 continue
             content = self.read_file_at_ref(path, head_revision)
-            if content is not None:
-                encoded = content.encode("utf-8")
-                encoded_len = len(encoded)
-                if encoded_len <= per_file_bytes and total_bytes + encoded_len <= max_context_bytes:
-                    cfile.content = content
-                    total_bytes += encoded_len
-                elif total_bytes + per_file_bytes <= max_context_bytes:
-                    # Bounded window around changed hunks for large files
-                    lines = content.splitlines()
-                    needed_lines: set[int] = set()
-                    for hunk in cfile.hunks:
-                        start = max(1, hunk.new_start - 25)
-                        end = min(len(lines), hunk.new_start + max(hunk.new_lines, 1) + 25)
-                        needed_lines.update(range(start, end + 1))
+            if content is None:
+                cfile.content = None
+                cfile.prompt_context = None
+                continue
 
-                    window_lines: list[str] = []
-                    for idx, line in enumerate(lines, start=1):
-                        if idx in needed_lines:
-                            window_lines.append(line)
-                    window_content = "\n".join(window_lines)
-                    window_bytes = len(window_content.encode("utf-8"))
-                    cfile.content = window_content
+            # cfile.content always retains the complete, uncorrupted original source code
+            cfile.content = content
+            lines = content.splitlines()
+            total_lines = len(lines)
+            full_encoded = content.encode("utf-8")
+            full_len = len(full_encoded)
+
+            remaining_budget = max(0, max_context_bytes - total_bytes)
+
+            if full_len <= per_file_bytes and full_len <= remaining_budget:
+                cfile.prompt_context = "\n".join(
+                    f"{i}: {line}" for i, line in enumerate(lines, start=1)
+                )
+                total_bytes += len(cfile.prompt_context.encode("utf-8"))
+            elif remaining_budget > 0:
+                # Bounded window around changed hunks preserving real source line coordinates
+                intervals: list[tuple[int, int]] = [(1, min(30, total_lines))]
+                for hunk in cfile.hunks:
+                    h_start = max(1, hunk.new_start - 25)
+                    h_end = min(total_lines, hunk.new_start + max(hunk.new_lines, 1) + 25)
+                    intervals.append((h_start, h_end))
+
+                window_repr = render_windowed_source_context(lines, intervals, total_lines)
+                window_bytes = len(window_repr.encode("utf-8"))
+
+                if window_bytes <= remaining_budget:
+                    cfile.prompt_context = window_repr
                     total_bytes += window_bytes
                     omitted_scope.append(
                         f"Content for '{path}' bounded to changed hunk windows "
                         f"({window_bytes} bytes)."
                     )
                 else:
-                    omitted_scope.append(
-                        f"Content for '{path}' omitted due to context size limits."
-                    )
+                    # Try tighter window without header to fit remaining budget
+                    tight_intervals: list[tuple[int, int]] = []
+                    for hunk in cfile.hunks:
+                        h_start = max(1, hunk.new_start - 5)
+                        h_end = min(total_lines, hunk.new_start + max(hunk.new_lines, 1) + 5)
+                        tight_intervals.append((h_start, h_end))
+
+                    tight_repr = render_windowed_source_context(lines, tight_intervals, total_lines)
+                    tight_bytes = len(tight_repr.encode("utf-8"))
+
+                    if tight_bytes <= remaining_budget:
+                        cfile.prompt_context = tight_repr
+                        total_bytes += tight_bytes
+                        omitted_scope.append(
+                            f"Content for '{path}' bounded to tight hunk windows "
+                            f"({tight_bytes} bytes)."
+                        )
+                    else:
+                        cfile.prompt_context = None
+                        omitted_scope.append(
+                            f"Content for '{path}' omitted due to context size limits."
+                        )
+            else:
+                cfile.prompt_context = None
+                omitted_scope.append(f"Content for '{path}' omitted due to context size limits.")
+
         return total_bytes
 
     def _check_worktree_untracked_files(self, omitted_scope: list[str]) -> None:
@@ -682,7 +758,6 @@ class GitContextCollector:
             return None, f"File '{file_path}' was not modified in this review"
 
         cfile = changed_files[file_path]
-        content_lines = cfile.content.splitlines() if cfile.content else []
 
         combined_text = f"{subject}\n{description}\n{suggested_action or ''}"
         backticked = re.findall(r"`([a-zA-Z0-9_\.\-:]+)`", combined_text)
@@ -716,6 +791,28 @@ class GitContextCollector:
             ):
                 candidate_symbols.append(s)
 
+        if not cfile.content:
+            if candidate_symbols:
+                return None, (
+                    f"Source content unavailable for '{file_path}'; "
+                    "finding downgraded to file-level comment"
+                )
+            # Pure line anchor validation without semantic symbols
+            if line is not None:
+                in_changed = line in cfile.changed_lines or any(
+                    hunk.new_start <= line <= hunk.new_start + max(hunk.new_lines - 1, 0)
+                    for hunk in cfile.hunks
+                )
+                if in_changed:
+                    return line, None
+                return None, (
+                    f"Line {line} is outside changed hunks in '{file_path}'; "
+                    "downgraded to file-level comment"
+                )
+            return None, None
+
+        content_lines = cfile.content.splitlines()
+
         # 1. Check if the cited line itself directly contains any candidate symbol
         if line is not None and 1 <= line <= len(content_lines):
             exact_line_text = content_lines[line - 1]
@@ -723,7 +820,15 @@ class GitContextCollector:
                 if sym in exact_line_text:
                     return line, None
 
-        # 2. Search for exact definition or unique reference match in file
+        # 2. Check if the cited line is within 2 lines of candidate symbol in context
+        if line is not None and 1 <= line <= len(content_lines):
+            target_slice = content_lines[max(0, line - 2) : min(len(content_lines), line + 1)]
+            slice_text = "\n".join(target_slice)
+            for sym in candidate_symbols:
+                if sym in slice_text:
+                    return line, None
+
+        # 3. Search for exact definition or unique reference match in file
         if content_lines and candidate_symbols:
             for sym in candidate_symbols:
                 def_matches: list[int] = []
@@ -745,7 +850,7 @@ class GitContextCollector:
                         if is_def:
                             def_matches.append(idx)
 
-                # Prioritize definition site in changed lines
+                # Prioritize definition site in changed lines ONLY when unique
                 hunk_defs = [
                     line_num for line_num in def_matches if line_num in cfile.changed_lines
                 ]
@@ -785,14 +890,6 @@ class GitContextCollector:
                         else None
                     )
                     return remapped, reason
-
-        # 3. If line is within 2 lines of candidate symbol in context:
-        if line is not None and 1 <= line <= len(content_lines):
-            target_slice = content_lines[max(0, line - 2) : min(len(content_lines), line + 1)]
-            slice_text = "\n".join(target_slice)
-            for sym in candidate_symbols:
-                if sym in slice_text:
-                    return line, None
 
         # 4. If line is provided:
         if line is not None:
