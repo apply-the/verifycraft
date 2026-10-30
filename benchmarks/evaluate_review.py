@@ -1362,9 +1362,7 @@ def run_evaluation(
     cases = load_review_eval_dataset(split=split)
 
     credentials_available = (
-        _check_credentials_available(provider, base_url=base_url)
-        if mode == "live"
-        else False
+        _check_credentials_available(provider, base_url=base_url) if mode == "live" else False
     )
     if mode == "live":
         try:

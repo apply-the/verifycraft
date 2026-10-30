@@ -298,4 +298,4 @@ def test_malformed_provider_output_handled_defensively() -> None:
 
     # Non-dictionary root
     with pytest.raises(ProviderCallError):
-        ProviderResponseParser.parse_json_response("[\"not\", \"a\", \"dict\"]")
+        ProviderResponseParser.parse_json_response('["not", "a", "dict"]')
