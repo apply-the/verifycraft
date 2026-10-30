@@ -36,6 +36,7 @@ class ChangedFile:
     hunks: list[DiffHunk] = field(default_factory=list)
     content: str | None = None
     prompt_context: str | None = None
+    is_context_omitted: bool = False
 
 
 def merge_line_intervals(intervals: list[tuple[int, int]]) -> list[tuple[int, int]]:
@@ -603,17 +604,21 @@ class GitContextCollector:
             cfile.content = content
             lines = content.splitlines()
             total_lines = len(lines)
-            full_encoded = content.encode("utf-8")
-            full_len = len(full_encoded)
-
             remaining_budget = max(0, max_context_bytes - total_bytes)
 
-            if full_len <= per_file_bytes and full_len <= remaining_budget:
-                cfile.prompt_context = "\n".join(
-                    f"{i}: {line}" for i, line in enumerate(lines, start=1)
-                )
-                total_bytes += len(cfile.prompt_context.encode("utf-8"))
-            elif remaining_budget > 0:
+            if remaining_budget <= 0:
+                cfile.is_context_omitted = True
+                cfile.prompt_context = None
+                omitted_scope.append(f"Content for '{path}' omitted due to context size limits.")
+                continue
+
+            full_numbered = "\n".join(f"{i}: {line}" for i, line in enumerate(lines, start=1))
+            full_numbered_bytes = len(full_numbered.encode("utf-8"))
+
+            if full_numbered_bytes <= per_file_bytes and full_numbered_bytes <= remaining_budget:
+                cfile.prompt_context = full_numbered
+                total_bytes += full_numbered_bytes
+            else:
                 # Bounded window around changed hunks preserving real source line coordinates
                 intervals: list[tuple[int, int]] = [(1, min(30, total_lines))]
                 for hunk in cfile.hunks:
@@ -650,13 +655,11 @@ class GitContextCollector:
                             f"({tight_bytes} bytes)."
                         )
                     else:
+                        cfile.is_context_omitted = True
                         cfile.prompt_context = None
                         omitted_scope.append(
                             f"Content for '{path}' omitted due to context size limits."
                         )
-            else:
-                cfile.prompt_context = None
-                omitted_scope.append(f"Content for '{path}' omitted due to context size limits.")
 
         return total_bytes
 

@@ -414,3 +414,218 @@ def test_end_to_end_review_preserves_separated_hunk_coordinates() -> None:
     assert finding_lines["Issue at `func_150`"] == 150
     assert finding_lines["Issue at `func_550`"] == 550
     assert finding_lines["Issue at `func_950`"] == 950
+
+
+def test_numbered_source_content_cannot_exceed_allocated_budget() -> None:
+    """Validate that actual numbered prompt representation bytes are accounted for against budget.
+
+    If raw source bytes <= budget but numbered representation > budget,
+    the complete source is rejected and windowed or omitted, never exceeding budget.
+    """
+    collector = GitContextCollector(repo_path=".")
+    # Create 100 lines: raw is ~800 bytes, but numbered format adds ~400 bytes (~1200 bytes)
+    lines = [f"x_{i} = {i}" for i in range(1, 101)]
+    raw_content = "\n".join(lines)
+    raw_bytes = len(raw_content.encode("utf-8"))
+    assert raw_bytes < 1000
+
+    numbered = "\n".join(f"{i}: {line}" for i, line in enumerate(lines, start=1))
+    numbered_bytes = len(numbered.encode("utf-8"))
+    assert numbered_bytes > 1000
+
+    # Allocate budget = 950 bytes (between raw_bytes and numbered_bytes)
+    budget = 950
+    hunk = DiffHunk(old_start=50, old_lines=5, new_start=50, new_lines=5, content="...")
+    cfile = ChangedFile(
+        path="src/service.py",
+        status="modified",
+        changed_lines={50},
+        hunks=[hunk],
+    )
+    omitted: list[str] = []
+
+    with patch.object(collector, "read_file_at_ref", return_value=raw_content):
+        total_bytes = collector._populate_file_contents(
+            changed_files={"src/service.py": cfile},
+            head_revision="HEAD",
+            max_context_bytes=budget,
+            omitted_scope=omitted,
+        )
+
+    # Invariant: total_bytes must NOT exceed allocated budget
+    assert total_bytes <= budget
+    if cfile.prompt_context is not None:
+        assert len(cfile.prompt_context.encode("utf-8")) <= budget
+        # It must not have accepted the full numbered context since numbered_bytes > budget
+        assert cfile.prompt_context != numbered
+    else:
+        assert cfile.is_context_omitted is True
+
+
+def test_zero_byte_source_budget_prevents_source_content_leak_in_prompt() -> None:
+    """A zero-byte source budget marks context omitted and prevents prompt leak."""
+    from verifycraft.review.git import GitReviewContext
+
+    collector = GitContextCollector(repo_path=".")
+    content = "SECRET_PASSWORD = 'do-not-leak-into-prompt'\n" * 20
+    cfile = ChangedFile(
+        path="src/secret.py",
+        status="modified",
+        changed_lines={5},
+        hunks=[DiffHunk(old_start=5, old_lines=2, new_start=5, new_lines=2, content="...")],
+    )
+    omitted: list[str] = []
+
+    with patch.object(collector, "read_file_at_ref", return_value=content):
+        total_bytes = collector._populate_file_contents(
+            changed_files={"src/secret.py": cfile},
+            head_revision="HEAD",
+            max_context_bytes=0,
+            omitted_scope=omitted,
+        )
+
+    assert total_bytes == 0
+    assert cfile.is_context_omitted is True
+    assert cfile.content == content  # full content retained for deterministic validation
+
+    engine = ReviewEngine()
+    formatted = engine._format_changed_file_context(cfile)
+    assert formatted == "(Content omitted due to context size limits)"
+    assert "SECRET_PASSWORD" not in formatted
+
+    # Verify ReviewEngine._build_prompt also does not leak source content
+    ctx = GitReviewContext(
+        repo_path=".",
+        base_revision="main",
+        head_revision="HEAD",
+        base_commit="abc12345",
+        head_commit="def67890",
+        changed_files={"src/secret.py": cfile},
+        raw_diff="diff --git a/src/secret.py b/src/secret.py\n+dummy diff",
+        related_files={},
+        omitted_scope=omitted,
+    )
+    prompt = engine._build_prompt(ctx, requirements=[])
+    assert "SECRET_PASSWORD" not in prompt
+    assert "(Content omitted due to context size limits)" in prompt
+
+
+def test_omitted_files_explicitly_reported_as_omitted() -> None:
+    """Omitted files remain explicitly reported in omitted_scope and prompt notice."""
+    from verifycraft.review.git import GitReviewContext
+
+    collector = GitContextCollector(repo_path=".")
+    content = "def test():\n    pass\n" * 50
+    cfile = ChangedFile(
+        path="src/omitted_file.py",
+        status="modified",
+        changed_lines={10},
+    )
+    omitted: list[str] = []
+
+    with patch.object(collector, "read_file_at_ref", return_value=content):
+        collector._populate_file_contents(
+            changed_files={"src/omitted_file.py": cfile},
+            head_revision="HEAD",
+            max_context_bytes=10,
+            omitted_scope=omitted,
+        )
+
+    assert cfile.is_context_omitted is True
+    assert any(
+        "Content for 'src/omitted_file.py' omitted due to context size limits." in note
+        for note in omitted
+    )
+
+    engine = ReviewEngine()
+    ctx = GitReviewContext(
+        repo_path=".",
+        base_revision="main",
+        head_revision="HEAD",
+        base_commit="abc12345",
+        head_commit="def67890",
+        changed_files={"src/omitted_file.py": cfile},
+        raw_diff="",
+        related_files={},
+        omitted_scope=omitted,
+    )
+    prompt = engine._build_prompt(ctx, requirements=[])
+    assert "## Context Scope and Omissions Notice" in prompt
+    assert "Content for 'src/omitted_file.py' omitted due to context size limits." in prompt
+
+
+def test_full_original_line_coordinates_remain_correct_when_context_omitted() -> None:
+    """Full original line coordinates and AST remain correct even when context is omitted."""
+    from verifycraft.review.git import GitReviewContext
+
+    collector = GitContextCollector(repo_path=".")
+    content = _generate_1000_line_file_content()
+    cfile = ChangedFile(
+        path="src/large_service.py",
+        status="modified",
+        changed_lines=set(range(400, 411)),
+        hunks=[DiffHunk(old_start=400, old_lines=10, new_start=400, new_lines=10, content="...")],
+    )
+    omitted: list[str] = []
+
+    with patch.object(collector, "read_file_at_ref", return_value=content):
+        collector._populate_file_contents(
+            changed_files={"src/large_service.py": cfile},
+            head_revision="HEAD",
+            max_context_bytes=0,  # Force full context omission
+            omitted_scope=omitted,
+        )
+
+    assert cfile.is_context_omitted is True
+    assert cfile.content == content  # complete original content preserved
+
+    # Deterministic semantic anchor validator can still validate line 400 with AST
+    line, reason = collector.validate_semantic_anchor(
+        file_path="src/large_service.py",
+        line=400,
+        subject="Validate `process_batch` definition",
+        description="Check function signature",
+        changed_files={"src/large_service.py": cfile},
+    )
+    assert line == 400
+    assert reason is None
+
+    # Line bounds checking in ReviewEngine also succeeds against cfile.content
+    engine = ReviewEngine()
+    ctx = GitReviewContext(
+        repo_path=".",
+        base_revision="main",
+        head_revision="HEAD",
+        base_commit="abc12345",
+        head_commit="def67890",
+        changed_files={"src/large_service.py": cfile},
+        raw_diff="",
+        related_files={},
+        omitted_scope=omitted,
+    )
+    assert engine._is_valid_file_and_line("src/large_service.py", 400, ctx) is True
+    assert engine._is_valid_file_and_line("src/large_service.py", 1000, ctx) is True
+    assert engine._is_valid_file_and_line("src/large_service.py", 1001, ctx) is False
+
+
+def test_legacy_and_synthetic_changed_file_compatibility() -> None:
+    """Synthetic ChangedFile with prompt_context=None formats correctly."""
+    engine = ReviewEngine()
+    synthetic_cfile = ChangedFile(
+        path="src/legacy.py",
+        status="modified",
+        content="def greet():\n    return 'hello'\n",
+    )
+    assert synthetic_cfile.is_context_omitted is False
+    assert synthetic_cfile.prompt_context is None
+
+    formatted = engine._format_changed_file_context(synthetic_cfile)
+    assert "1: def greet():" in formatted
+    assert "2:     return 'hello'" in formatted
+
+    empty_cfile = ChangedFile(
+        path="src/empty.py",
+        status="added",
+        content="",
+    )
+    assert engine._format_changed_file_context(empty_cfile) == "(Empty file)"

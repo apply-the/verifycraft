@@ -876,10 +876,12 @@ class ReviewEngine:
         context_window: int = 25,
     ) -> str:
         """Format a changed file with 1-indexed line numbers and bounded surrounding context."""
-        if cfile.prompt_context is not None:
-            return cfile.prompt_context
+        if getattr(cfile, "is_context_omitted", False):
+            return "(Content omitted due to context size limits)"
         if not cfile.content:
             return "(Empty file)"
+        if cfile.prompt_context is not None:
+            return cfile.prompt_context
 
         lines = cfile.content.splitlines()
         total_lines = len(lines)
