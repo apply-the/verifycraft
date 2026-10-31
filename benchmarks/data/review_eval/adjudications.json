@@ -4,7 +4,8 @@
   "adjudications": [
     {
       "case_id": "dev_09_missing_edge_case_empty_collection",
-      "fingerprint": "dev09_keyerror_primary_id",
+      "fingerprint": "fb510398cc63600b",
+      "adjudication_id": "ADJ-DEV09-KEYERROR-01",
       "file_path": "src/handlers/users.py",
       "line": 4,
       "subject": "Missing 'id' key raises KeyError",

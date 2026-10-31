@@ -121,13 +121,29 @@ class AdjudicationCatalog:
     ) -> None:
         self.version = version
         self.records: list[AdjudicationRecord] = records or []
-        self._by_fingerprint: dict[str, AdjudicationRecord] = {
-            r.fingerprint: r for r in self.records
-        }
+        self._by_fingerprint: dict[str, AdjudicationRecord] = {}
+        for r in self.records:
+            self._register_record(r)
+
+    def _register_record(self, record: AdjudicationRecord) -> None:
+        if record.fingerprint:
+            self._by_fingerprint[record.fingerprint] = record
+        canon_fp = compute_finding_fingerprint(
+            record.case_id, record.file_path, record.line, record.subject
+        )
+        self._by_fingerprint[canon_fp] = record
 
     def add_record(self, record: AdjudicationRecord) -> None:
         self.records.append(record)
-        self._by_fingerprint[record.fingerprint] = record
+        self._register_record(record)
+
+    def is_compatible_with(self, target_version: str | None) -> bool:
+        """Validate semver major version compatibility with target dataset or evaluation."""
+        if not target_version:
+            return True
+        catalog_major = self.version.split(".")[0]
+        target_major = str(target_version).split(".")[0]
+        return catalog_major == target_major
 
     def find_adjudication(
         self,
@@ -135,25 +151,38 @@ class AdjudicationCatalog:
         file_path: str,
         line: int | None,
         subject: str,
+        target_version: str | None = None,
     ) -> AdjudicationRecord | None:
-        """Find an adjudication record matching a finding by fingerprint or location heuristics."""
+        """Find an adjudication record matching a finding with strict identity.
+
+        Requires exact case_id, file_path, line coordinate, and fingerprint identity.
+        Rejects ambiguous findings or mismatched versions without guessing.
+        """
+        if target_version and not self.is_compatible_with(target_version):
+            return None
+
         fp = compute_finding_fingerprint(case_id, file_path, line, subject)
         if fp in self._by_fingerprint:
-            return self._by_fingerprint[fp]
+            rec = self._by_fingerprint[fp]
+            if rec.case_id == case_id and rec.file_path == file_path and rec.line == line:
+                return rec
 
-        # Location fallback: same case_id, file_path, line, and significant word overlap
-        words = set(re.findall(r"\w+", subject.lower()))
-        for rec in self.records:
-            if rec.case_id == case_id and rec.file_path == file_path:
-                rec_words = set(re.findall(r"\w+", rec.subject.lower()))
-                common = words & rec_words
-                # If lines match (or within 2 lines) and high word overlap
-                line_close = rec.line == line or (
-                    rec.line is not None and line is not None and abs(rec.line - line) <= 2
-                )
-                if line_close and len(common) >= min(3, max(1, len(rec_words) // 2)):
-                    return rec
+        candidates = [
+            r
+            for r in self.records
+            if r.case_id == case_id and r.file_path == file_path and r.line == line
+        ]
+        if not candidates:
+            return None
 
+        norm_subject = re.sub(r"\s+", " ", subject.strip().lower())
+        matched_candidates = [
+            c for c in candidates if re.sub(r"\s+", " ", c.subject.strip().lower()) == norm_subject
+        ]
+        if len(matched_candidates) == 1:
+            return matched_candidates[0]
+
+        # Ambiguous or non-matching subject on this coordinate: reject without guessing
         return None
 
     @classmethod

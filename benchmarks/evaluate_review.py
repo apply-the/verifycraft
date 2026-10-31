@@ -136,6 +136,7 @@ class VariantMetrics:
     estimated_cost_usd: float
     findings: list[dict[str, Any]]
     assessments: list[dict[str, Any]]
+    duplicate_findings: int = 0
 
 
 @dataclass
@@ -178,6 +179,7 @@ class AggregateVariantSummary:
     total_output_tokens: int
     total_latency_seconds: float
     estimated_cost_usd: float
+    duplicate_findings: int = 0
 
 
 class ReplayReviewerAdapter(ReviewerModelAdapter):
@@ -785,40 +787,70 @@ def _is_invalid_location(file_path: str, line: int | None, case: ReviewEvalCase)
     return False
 
 
+def _find_maximum_bipartite_matching(
+    findings: list[Any],
+    expected_issues: list[ExpectedIssue],
+    case: ReviewEvalCase,
+) -> dict[int, int]:
+    """Find deterministic maximum bipartite matching between findings and expected issues.
+
+    Returns mapping of finding_idx -> expected_issue_idx.
+    """
+    adj: dict[int, list[int]] = {}
+    for f_idx, f in enumerate(findings):
+        adj[f_idx] = []
+        for exp_idx, exp in enumerate(expected_issues):
+            if _is_finding_match(f, exp, case):
+                adj[f_idx].append(exp_idx)
+
+    # exp_to_f: maps exp_idx -> f_idx
+    exp_to_f: dict[int, int] = {}
+
+    def dfs(f_idx: int, visited_exps: set[int]) -> bool:
+        for exp_idx in adj[f_idx]:
+            if exp_idx in visited_exps:
+                continue
+            visited_exps.add(exp_idx)
+            if exp_idx not in exp_to_f or dfs(exp_to_f[exp_idx], visited_exps):
+                exp_to_f[exp_idx] = f_idx
+                return True
+        return False
+
+    for f_idx in range(len(findings)):
+        dfs(f_idx, set())
+
+    return {f_idx: exp_idx for exp_idx, f_idx in exp_to_f.items()}
+
+
 def _match_findings_to_expected(
     findings: list[Any],
     expected_issues: list[ExpectedIssue],
     case: ReviewEvalCase,
 ) -> tuple[int, list[Any], list[Any]]:
-    """Match candidate findings to expected issues in a 1-to-1 assignment.
+    """Match candidate findings to expected issues via maximum bipartite matching.
+
+    Guarantees optimal true-positive yield (maximum cardinality) and strict 1-to-1
+    assignment: one finding cannot satisfy multiple defects, and multiple findings
+    cannot inflate the count of a single defect. Any non-assigned finding that
+    matches an already-covered defect is explicitly categorized as a duplicate.
 
     Returns:
         (correct_count, matched_findings, duplicate_findings)
     """
-    matched_exps: set[int] = set()
-    matched_findings: list[Any] = []
+    f_to_exp = _find_maximum_bipartite_matching(findings, expected_issues, case)
+
+    matched_f_indices = set(f_to_exp.keys())
+    matched_findings = [findings[i] for i in sorted(matched_f_indices)]
+
+    # Detect duplicate findings: finding matches at least 1 defect, but is not in optimal matching
     duplicate_findings: list[Any] = []
-    used_finding_indices: set[int] = set()
-
-    for exp_idx, exp in enumerate(expected_issues):
-        for f_idx, f in enumerate(findings):
-            if f_idx in used_finding_indices:
-                continue
-            if _is_finding_match(f, exp, case):
-                matched_exps.add(exp_idx)
-                used_finding_indices.add(f_idx)
-                matched_findings.append(f)
-                break
-
     for f_idx, f in enumerate(findings):
-        if f_idx in used_finding_indices:
+        if f_idx in matched_f_indices:
             continue
-        for exp in expected_issues:
-            if _is_finding_match(f, exp, case):
-                duplicate_findings.append(f)
-                break
+        if any(_is_finding_match(f, exp, case) for exp in expected_issues):
+            duplicate_findings.append(f)
 
-    return len(matched_exps), matched_findings, duplicate_findings
+    return len(f_to_exp), matched_findings, duplicate_findings
 
 
 def _is_finding_false_positive(
@@ -855,6 +887,7 @@ def _is_finding_false_positive(
             file_path=_get_finding_attr(f, "file_path", ""),
             line=_get_finding_attr(f, "line", None),
             subject=_get_finding_attr(f, "subject", ""),
+            target_version=case.version,
         )
         if adj:
             return adj.decision not in (
@@ -1008,6 +1041,7 @@ def _score_variant(
         estimated_cost_usd=round(cost_usd, 6),
         findings=finding_dicts,
         assessments=assessment_dicts,
+        duplicate_findings=len(duplicates),
     )
 
 
@@ -1197,6 +1231,7 @@ def _aggregate_variant_metrics(
     tot_correct = sum(v.correct_findings for v in var_list)
     tot_fp = sum(v.false_positives for v in var_list)
     tot_fp_clean = sum(v.false_positives_clean for v in var_list)
+    tot_duplicates = sum(v.duplicate_findings for v in var_list)
     tot_inv = sum(v.invalid_locations for v in var_list)
     tot_req_corr = sum(v.requirements_correct for v in var_list)
     tot_reqs = sum(v.total_requirements for v in var_list)
@@ -1207,9 +1242,8 @@ def _aggregate_variant_metrics(
     tot_latency = round(sum(v.latency_seconds for v in var_list), 4)
     tot_cost = round(sum(v.estimated_cost_usd for v in var_list), 6)
 
-    precision = (
-        round(tot_correct / (tot_correct + tot_fp), 4) if (tot_correct + tot_fp) > 0 else 1.0
-    )
+    total_actionable = tot_correct + tot_fp + tot_duplicates
+    precision = round(tot_correct / total_actionable, 4) if total_actionable > 0 else 1.0
     recall = round(tot_correct / total_expected_defects, 4) if total_expected_defects > 0 else 1.0
     req_acc = round(tot_req_corr / tot_reqs, 4) if tot_reqs > 0 else 1.0
 
@@ -1223,6 +1257,7 @@ def _aggregate_variant_metrics(
         false_positives=tot_fp,
         false_positives_clean=tot_fp_clean,
         actionable_precision=precision,
+        duplicate_findings=tot_duplicates,
         invalid_locations=tot_inv,
         requirements_correct=tot_req_corr,
         total_requirements=tot_reqs,
@@ -1327,6 +1362,15 @@ def _print_aggregate_metrics(
             str(agg_b.false_positives),
             str(agg_c.false_positives),
             str(agg_rep.false_positives),
+        )
+    )
+    print(
+        _format_table_row(
+            "Duplicate Findings",
+            str(agg_a.duplicate_findings),
+            str(agg_b.duplicate_findings),
+            str(agg_c.duplicate_findings),
+            str(agg_rep.duplicate_findings),
         )
     )
     print(
@@ -1609,6 +1653,15 @@ def _print_rescore_report(res: dict[str, Any]) -> None:
     )
     print(
         _format_table_row(
+            "Duplicate Findings",
+            str(v_a.get("duplicate_findings", 0)),
+            str(v_b.get("duplicate_findings", 0)),
+            str(v_c.get("duplicate_findings", 0)),
+            str(v_rep.get("duplicate_findings", 0)),
+        )
+    )
+    print(
+        _format_table_row(
             "FP on Clean Changes",
             str(v_a["false_positives_clean"]),
             str(v_b["false_positives_clean"]),
@@ -1681,8 +1734,57 @@ def rescore_report(
         )
         raise SystemExit(1)
 
+    raw_case_ids = [c.get("case_id") for c in raw_cases]
+    has_duplicates = len(raw_case_ids) != len(set(raw_case_ids))
+
     cases_list = load_review_eval_dataset(dataset_path=dataset_path, split="all")
     cases_by_id = {c.case_id: c for c in cases_list}
+
+    split_val = str(raw_rep.get("split", "all")).lower()
+    expected_split_cases = [c for c in cases_list if split_val == "all" or c.split == split_val]
+    expected_case_ids = {c.case_id for c in expected_split_cases}
+    actual_case_ids = set(raw_case_ids)
+    is_complete_suite = (actual_case_ids == expected_case_ids) and not has_duplicates
+
+    # Validate version compatibility
+    raw_dataset_ver = raw_rep.get("dataset_version")
+    raw_eval_ver = raw_rep.get("evaluation_version")
+    version_compatible = True
+    if raw_dataset_ver and str(raw_dataset_ver).split(".")[0] != "1":
+        version_compatible = False
+    if raw_eval_ver and str(raw_eval_ver).split(".")[0] not in ("2", "1"):
+        version_compatible = False
+
+    mode_val = str(raw_rep.get("execution_mode", "simulated")).lower()
+    provider_val = str(raw_rep.get("provider", "deepseek")).lower()
+
+    # Verify authentic live execution evidence when claiming live mode
+    live_evidence_verified = False
+    total_live_latency = 0.0
+    total_live_tokens = 0
+    if mode_val == "live":
+        total_live_latency = sum(
+            c.get(v, {}).get("latency_seconds", 0.0)
+            for c in raw_cases
+            for v in (VARIANT_A_KEY, VARIANT_B_KEY, VARIANT_C_KEY)
+        )
+        total_live_tokens = sum(
+            c.get(v, {}).get("tokens_used", 0)
+            for c in raw_cases
+            for v in (VARIANT_A_KEY, VARIANT_B_KEY, VARIANT_C_KEY)
+        )
+        orig_gate = raw_rep.get("release_gate", {})
+        orig_credentials = orig_gate.get("credentials_available", True)
+        orig_calls_completed = orig_gate.get("live_provider_call_completed", True)
+        orig_status = orig_gate.get("status", "")
+        if (
+            total_live_latency > 0.0
+            and total_live_tokens > 0
+            and orig_credentials is True
+            and orig_calls_completed is True
+            and orig_status not in ("BLOCKED", "PROVIDER_CALL_FAILED", "SIMULATED_TEST_ONLY")
+        ):
+            live_evidence_verified = True
 
     adj_path = (
         adjudications_path
@@ -1805,19 +1907,157 @@ def rescore_report(
         VARIANT_REPLAY_KEY, "Variant C-Replay (Replayed B)", new_results, total_expected_defects
     )
 
-    mode_val = raw_rep.get("execution_mode", "live")
-    provider_val = raw_rep.get("provider", "deepseek")
-    split_val = raw_rep.get("split", "all")
-    new_gate = assess_release_gate(
-        mode=mode_val,
-        live_active=(mode_val == "live"),
-        credentials_available=(mode_val == "live"),
-        live_provider_call_completed=True,
-        agg_b=agg_b,
-        agg_c=agg_c,
-        split=split_val,
-        provider=provider_val,
-    )
+    # Evaluate defensible release gate policy with integrity checks
+    if has_duplicates:
+        new_gate = {
+            "status": "DUPLICATE_CASES_IN_REPORT",
+            "recommendation": (
+                "NO-GO (Report Corrupted: Duplicate case IDs detected in per_case_metrics)"
+            ),
+            "summary": "Offline rescoring failed closed: duplicate case records found in report.",
+            "credentials_available": False,
+            "live_provider_call_completed": False,
+            "live_evaluation_completed": False,
+            "split_evaluated": split_val,
+            "is_complete_evaluation": False,
+            "quality_criteria_passed": False,
+            "maintainer_approval_granted": False,
+            "is_offline_rescore": True,
+            "live_evidence_verified": False,
+            "quality_audit": {
+                "actionable_precision": agg_c.actionable_precision,
+                "actionable_precision_passed": False,
+                "defect_recall": agg_c.defect_recall,
+                "defect_recall_passed": False,
+                "invalid_locations": agg_c.invalid_locations,
+                "invalid_locations_passed": False,
+                "value_add_over_baseline": False,
+                "failures": ["Duplicate case IDs detected in benchmark report"],
+            },
+        }
+    elif not version_compatible:
+        new_gate = {
+            "status": "INCOMPATIBLE_REPORT",
+            "recommendation": (
+                "NO-GO (Incompatible Report: Version is not compatible with current dataset)"
+            ),
+            "summary": (
+                "Offline rescoring failed closed: report version incompatible with benchmark."
+            ),
+            "credentials_available": False,
+            "live_provider_call_completed": False,
+            "live_evaluation_completed": False,
+            "split_evaluated": split_val,
+            "is_complete_evaluation": False,
+            "quality_criteria_passed": False,
+            "maintainer_approval_granted": False,
+            "is_offline_rescore": True,
+            "live_evidence_verified": False,
+            "quality_audit": {
+                "actionable_precision": agg_c.actionable_precision,
+                "actionable_precision_passed": False,
+                "defect_recall": agg_c.defect_recall,
+                "defect_recall_passed": False,
+                "invalid_locations": agg_c.invalid_locations,
+                "invalid_locations_passed": False,
+                "value_add_over_baseline": False,
+                "failures": ["Report version incompatible with benchmark"],
+            },
+        }
+    elif not is_complete_suite:
+        new_gate = {
+            "status": "INCOMPLETE_REPORT",
+            "recommendation": (
+                f"NO-GO (Incomplete Evaluation: Expected {len(expected_case_ids)} "
+                f"cases for split '{split_val}', found {len(actual_case_ids)})"
+            ),
+            "summary": (f"Offline rescoring failed closed: missing cases for split '{split_val}'."),
+            "credentials_available": False,
+            "live_provider_call_completed": False,
+            "live_evaluation_completed": False,
+            "split_evaluated": split_val,
+            "is_complete_evaluation": False,
+            "quality_criteria_passed": False,
+            "maintainer_approval_granted": False,
+            "is_offline_rescore": True,
+            "live_evidence_verified": False,
+            "quality_audit": {
+                "actionable_precision": agg_c.actionable_precision,
+                "actionable_precision_passed": False,
+                "defect_recall": agg_c.defect_recall,
+                "defect_recall_passed": False,
+                "invalid_locations": agg_c.invalid_locations,
+                "invalid_locations_passed": False,
+                "value_add_over_baseline": False,
+                "failures": [f"Missing expected cases for split '{split_val}'"],
+            },
+        }
+    elif mode_val == "simulated":
+        new_gate = assess_release_gate(
+            mode="simulated",
+            live_active=False,
+            credentials_available=False,
+            live_provider_call_completed=False,
+            agg_b=agg_b,
+            agg_c=agg_c,
+            split=split_val,
+            provider=provider_val,
+        )
+        new_gate["is_offline_rescore"] = True
+        new_gate["live_evidence_verified"] = False
+    elif not live_evidence_verified:
+        new_gate = {
+            "status": "UNVERIFIED_LIVE_EVIDENCE",
+            "recommendation": (
+                "NO-GO (Unverified Live Evidence: Report lacks valid latency/token traces)"
+            ),
+            "summary": (
+                "Offline rescoring failed closed: report claims live execution mode "
+                "but lacks verifiable latency or token traces."
+            ),
+            "credentials_available": False,
+            "live_provider_call_completed": False,
+            "live_evaluation_completed": False,
+            "split_evaluated": split_val,
+            "is_complete_evaluation": is_complete_suite,
+            "quality_criteria_passed": False,
+            "maintainer_approval_granted": False,
+            "is_offline_rescore": True,
+            "live_evidence_verified": False,
+            "quality_audit": {
+                "actionable_precision": agg_c.actionable_precision,
+                "actionable_precision_passed": False,
+                "defect_recall": agg_c.defect_recall,
+                "defect_recall_passed": False,
+                "invalid_locations": agg_c.invalid_locations,
+                "invalid_locations_passed": False,
+                "value_add_over_baseline": False,
+                "failures": ["Live execution traces could not be verified"],
+            },
+        }
+    else:
+        new_gate = assess_release_gate(
+            mode="live",
+            live_active=True,
+            credentials_available=True,
+            live_provider_call_completed=True,
+            agg_b=agg_b,
+            agg_c=agg_c,
+            split=split_val,
+            provider=provider_val,
+        )
+        new_gate["is_offline_rescore"] = True
+        new_gate["live_evidence_verified"] = True
+        if new_gate["status"] == "PENDING_MAINTAINER_APPROVAL":
+            new_gate["recommendation"] = (
+                "PENDING_MAINTAINER_APPROVAL (Offline Rescore from Verified Live Evidence; "
+                "manual review of Conventional Comments, false positives, and requirement "
+                "assessments required before release)"
+            )
+            new_gate["summary"] = (
+                "All automated quality criteria passed based on offline rescoring of verified "
+                "live evidence. Maintainer manual review is required prior to release."
+            )
 
     rescore_summary: dict[str, Any] = {
         "evaluation_version": "2.1.0",
@@ -1826,6 +2066,15 @@ def rescore_report(
         "adjudications_version": adj_ver,
         "source_report_path": str(p.resolve()),
         "execution_mode": mode_val,
+        "is_offline_rescore": True,
+        "evidence_verification": {
+            "has_duplicates": has_duplicates,
+            "is_complete_suite": is_complete_suite,
+            "version_compatible": version_compatible,
+            "live_evidence_verified": live_evidence_verified,
+            "total_live_latency_seconds": round(total_live_latency, 4),
+            "total_live_tokens": total_live_tokens,
+        },
         "provider": provider_val,
         "model_name": raw_rep.get("model_name", "deepseek-chat"),
         "split": split_val,

@@ -12,9 +12,11 @@ from benchmarks.adjudication import (
 )
 from benchmarks.evaluate_review import (
     BenchmarkProgressReporter,
+    _aggregate_variant_metrics,
     _is_finding_match,
     _match_findings_to_expected,
     _normalize_requirement_status,
+    _score_variant,
     rescore_report,
 )
 from benchmarks.review_dataset import (
@@ -221,8 +223,152 @@ def test_single_finding_cannot_satisfy_multiple_defects() -> None:
     assert len(duplicate_findings) == 0
 
 
+def test_maximum_bipartite_matching_vs_greedy_adversarial() -> None:
+    """Verifies maximum bipartite matching finds optimal cardinality where greedy fails."""
+    # Defect A: tight range [10, 15]
+    defect_a = ExpectedIssue(
+        defect_id="DEFECT-A",
+        file_path="src/app.py",
+        line_range=[10, 15],
+        subject_contains="validation",
+        label="issue",
+    )
+    # Defect B: broader range [10, 30]
+    defect_b = ExpectedIssue(
+        defect_id="DEFECT-B",
+        file_path="src/app.py",
+        line_range=[10, 30],
+        subject_contains="validation",
+        label="issue",
+    )
+    gt = GroundTruth(
+        expected_verdict="has_defects",
+        expected_issues=[defect_b, defect_a],  # defect_b first in order
+    )
+    case = ReviewEvalCase(
+        case_id="adversarial_bipartite",
+        name="Adversarial Bipartite",
+        split="dev",
+        category="general",
+        version="1.0.0",
+        provenance="test",
+        base_commit="1" * 40,
+        head_commit="2" * 40,
+        changed_files={"src/app.py": "content\n" * 40},
+        raw_diff="diff",
+        ground_truth=gt,
+    )
+
+    # Finding 0 on line 12 matches both defect_a ([10, 15]) and defect_b ([10, 30]).
+    # Finding 1 on line 28 matches ONLY defect_b ([10, 30]).
+    f0 = RawCandidateFinding(
+        file_path="src/app.py",
+        line=12,
+        label="issue",
+        subject="Missing validation on line 12",
+        description="Validation omitted",
+    )
+    f1 = RawCandidateFinding(
+        file_path="src/app.py",
+        line=28,
+        label="issue",
+        subject="Missing validation on line 28",
+        description="Validation omitted",
+    )
+
+    # Greedy matching defect_b first grabs f0, leaving defect_a unable to match f1.
+    # Maximum bipartite matching finds optimal 2-match assignment: f0 -> defect_a, f1 -> defect_b.
+    matched_count, matched_findings, duplicate_findings = _match_findings_to_expected(
+        [f0, f1], [defect_b, defect_a], case
+    )
+    assert matched_count == 2
+    assert len(matched_findings) == 2
+    assert f0 in matched_findings
+    assert f1 in matched_findings
+    assert len(duplicate_findings) == 0
+
+
+def test_duplicate_accounting_and_actionable_precision() -> None:
+    """Verifies duplicate findings are explicitly recorded and included in precision."""
+    defect = ExpectedIssue(
+        defect_id="DEFECT-01",
+        file_path="src/app.py",
+        line_range=[10, 15],
+        subject_contains="validation",
+        label="issue",
+    )
+    gt = GroundTruth(
+        expected_verdict="has_defects",
+        expected_issues=[defect],
+    )
+    case = ReviewEvalCase(
+        case_id="dup_case",
+        name="Duplicate Accounting Case",
+        split="dev",
+        category="general",
+        version="1.0.0",
+        provenance="test",
+        base_commit="1" * 40,
+        head_commit="2" * 40,
+        changed_files={"src/app.py": "content\n" * 20},
+        raw_diff="diff",
+        ground_truth=gt,
+    )
+
+    f1 = RawCandidateFinding(
+        file_path="src/app.py",
+        line=12,
+        label="issue",
+        subject="Missing validation 1",
+        description="Validation omitted",
+    )
+    f2 = RawCandidateFinding(
+        file_path="src/app.py",
+        line=12,
+        label="issue",
+        subject="Missing validation 2",
+        description="Validation omitted",
+    )
+
+    # Score variant with 2 findings for 1 defect
+    metrics = _score_variant(
+        variant_name="variant_test",
+        findings=[f1, f2],
+        assessments=[],
+        case=case,
+        tokens_used=100,
+        prompt_tokens=50,
+        output_tokens=50,
+        latency_seconds=0.1,
+    )
+    assert metrics.correct_findings == 1
+    assert metrics.duplicate_findings == 1
+    assert metrics.false_positives == 0
+
+    # Precision includes duplicates: TP / (TP + FP + dups) = 1 / (1 + 0 + 1) = 0.5
+    from benchmarks.evaluate_review import CaseEvaluationMetrics
+
+    case_eval = CaseEvaluationMetrics(
+        case_id="dup_case",
+        name="dup",
+        split="dev",
+        category="general",
+        expected_verdict="has_defects",
+        expected_defects_count=1,
+        total_requirements=0,
+        variant_a=metrics,
+        variant_b=metrics,
+        variant_c=metrics,
+        variant_replay=metrics,
+    )
+    summary = _aggregate_variant_metrics("variant_c", "VC", [case_eval], 1)
+    assert summary.correct_findings == 1
+    assert summary.duplicate_findings == 1
+    assert summary.actionable_precision == 0.5
+
+
 def test_adjudication_catalog_lookup_and_fingerprint() -> None:
-    """Verifies adjudication fingerprinting and catalog lookups."""
+    """Verifies strict adjudication fingerprinting and catalog lookups."""
     catalog = AdjudicationCatalog(version="1.0.0")
     record = AdjudicationRecord(
         case_id="dev_09_missing_edge_case_empty_collection",
@@ -237,7 +383,7 @@ def test_adjudication_catalog_lookup_and_fingerprint() -> None:
     )
     catalog.add_record(record)
 
-    # Direct fingerprint lookup
+    # Direct exact lookup
     found = catalog.find_adjudication(
         case_id="dev_09_missing_edge_case_empty_collection",
         file_path="src/handlers/users.py",
@@ -249,15 +395,33 @@ def test_adjudication_catalog_lookup_and_fingerprint() -> None:
     assert found.counts_as_false_positive is True
     assert found.counts_as_true_positive is False
 
-    # Heuristic lookup with matching file, close line, and word overlap
-    found_heuristic = catalog.find_adjudication(
+    # Negative: Nearby line (line 5 instead of line 4) MUST return None (no loose line heuristics)
+    found_nearby = catalog.find_adjudication(
         case_id="dev_09_missing_edge_case_empty_collection",
         file_path="src/handlers/users.py",
         line=5,
-        subject="Missing 'id' key in primary user dict raises KeyError",
+        subject="Missing 'id' key in primary dict",
     )
-    assert found_heuristic is not None
-    assert found_heuristic.decision == AdjudicationDecision.UNSUPPORTED_CLAIM
+    assert found_nearby is None
+
+    # Negative: Unrelated subject on the same line MUST return None (no loose keyword overlap)
+    found_unrelated = catalog.find_adjudication(
+        case_id="dev_09_missing_edge_case_empty_collection",
+        file_path="src/handlers/users.py",
+        line=4,
+        subject="Unused local variable 'primary'",
+    )
+    assert found_unrelated is None
+
+    # Negative: Version mismatch MUST return None
+    found_incompatible = catalog.find_adjudication(
+        case_id="dev_09_missing_edge_case_empty_collection",
+        file_path="src/handlers/users.py",
+        line=4,
+        subject="Missing 'id' key in primary dict",
+        target_version="2.0.0",
+    )
+    assert found_incompatible is None
 
     # Fingerprint determinism
     fp1 = compute_finding_fingerprint("case1", "src/a.py", 10, "Subject text")
@@ -330,6 +494,8 @@ def test_offline_rescore_live_deepseek_evaluation() -> None:
     rescore_data = rescore_report(evidence_path, verbose=False)
 
     assert rescore_data["execution_mode"] == "live"
+    assert rescore_data["is_offline_rescore"] is True
+    assert rescore_data["evidence_verification"]["live_evidence_verified"] is True
     assert rescore_data["provider"] == "deepseek"
     assert rescore_data["cases_count"] == 16
     assert rescore_data["total_expected_defects"] == 10
@@ -337,12 +503,14 @@ def test_offline_rescore_live_deepseek_evaluation() -> None:
     # Old status vs new status
     assert rescore_data["old_gate_status"] == "FAILED_QUALITY_GATE"
     assert rescore_data["new_gate_status"] == "PENDING_MAINTAINER_APPROVAL"
+    assert "Offline Rescore from Verified Live Evidence" in rescore_data["new_recommendation"]
 
     # Variant C metrics
     var_c = rescore_data["variants"]["variant_c"]
     assert var_c["correct_findings"] == 10  # 10/10 defect yield
     assert var_c["defect_recall"] == 1.0  # 100% recall
     assert var_c["false_positives"] == 1  # only 1 FP (the adjudicated dev_09 KeyError claim)
+    assert var_c["duplicate_findings"] == 0
     assert var_c["actionable_precision"] > 0.90  # 90.91% >= 85% threshold
     assert var_c["invalid_locations"] == 0
 
@@ -360,6 +528,75 @@ def test_offline_rescore_live_deepseek_evaluation() -> None:
         d["metric"] == "false_positives" and d["old_value"] == 1 and d["new_value"] == 0
         for d in dev_01_deltas
     )
+
+
+def test_offline_rescore_fails_closed_on_simulated(tmp_path: Path) -> None:
+    """Verifies that rescoring a simulated report preserves simulated status."""
+    import json
+
+    evidence_path = Path("benchmarks/data/review_eval/reports/live_deepseek_evaluation_raw.json")
+    raw = json.loads(evidence_path.read_text(encoding="utf-8"))
+    raw["execution_mode"] = "simulated"
+    sim_path = tmp_path / "simulated_report.json"
+    sim_path.write_text(json.dumps(raw), encoding="utf-8")
+
+    rescore_data = rescore_report(sim_path, verbose=False)
+    assert rescore_data["new_gate_status"] == "SIMULATED_TEST_ONLY"
+    assert "Simulated Benchmark Only" in rescore_data["new_recommendation"]
+    assert rescore_data["release_gate"]["credentials_available"] is False
+    assert rescore_data["release_gate"]["live_provider_call_completed"] is False
+
+
+def test_offline_rescore_fails_closed_on_duplicate_cases(tmp_path: Path) -> None:
+    """Verifies that duplicate cases in a report cause offline rescoring to fail closed."""
+    import json
+
+    evidence_path = Path("benchmarks/data/review_eval/reports/live_deepseek_evaluation_raw.json")
+    raw = json.loads(evidence_path.read_text(encoding="utf-8"))
+    # Duplicate first case
+    raw["per_case_metrics"].append(raw["per_case_metrics"][0])
+    corrupt_path = tmp_path / "corrupt_duplicates.json"
+    corrupt_path.write_text(json.dumps(raw), encoding="utf-8")
+
+    rescore_data = rescore_report(corrupt_path, verbose=False)
+    assert rescore_data["new_gate_status"] == "DUPLICATE_CASES_IN_REPORT"
+    assert "Duplicate case IDs detected" in rescore_data["new_recommendation"]
+    assert rescore_data["release_gate"]["quality_criteria_passed"] is False
+
+
+def test_offline_rescore_fails_closed_on_incomplete_cases(tmp_path: Path) -> None:
+    """Verifies that an incomplete report (missing cases for declared split) fails closed."""
+    import json
+
+    evidence_path = Path("benchmarks/data/review_eval/reports/live_deepseek_evaluation_raw.json")
+    raw = json.loads(evidence_path.read_text(encoding="utf-8"))
+    # Remove half the cases
+    raw["per_case_metrics"] = raw["per_case_metrics"][:8]
+    incomplete_path = tmp_path / "incomplete_report.json"
+    incomplete_path.write_text(json.dumps(raw), encoding="utf-8")
+
+    rescore_data = rescore_report(incomplete_path, verbose=False)
+    assert rescore_data["new_gate_status"] == "INCOMPLETE_REPORT"
+    assert "Incomplete Evaluation" in rescore_data["new_recommendation"]
+
+
+def test_offline_rescore_fails_closed_on_unverified_live_traces(tmp_path: Path) -> None:
+    """Verifies that a report claiming live mode but lacking token/latency traces fails closed."""
+    import json
+
+    evidence_path = Path("benchmarks/data/review_eval/reports/live_deepseek_evaluation_raw.json")
+    raw = json.loads(evidence_path.read_text(encoding="utf-8"))
+    # Zero out all latencies and tokens
+    for c in raw["per_case_metrics"]:
+        for v in ("variant_a", "variant_b", "variant_c"):
+            c[v]["latency_seconds"] = 0.0
+            c[v]["tokens_used"] = 0
+    zero_path = tmp_path / "unverified_live.json"
+    zero_path.write_text(json.dumps(raw), encoding="utf-8")
+
+    rescore_data = rescore_report(zero_path, verbose=False)
+    assert rescore_data["new_gate_status"] == "UNVERIFIED_LIVE_EVIDENCE"
+    assert "Unverified Live Evidence" in rescore_data["new_recommendation"]
 
 
 def test_cli_progress_reporter_quiet_suppression(capsys: pytest.CaptureFixture[str]) -> None:
