@@ -1693,6 +1693,11 @@ def _print_rescore_report(res: dict[str, Any]) -> None:
     print(f"    Rescored Gate Status:       {res['new_gate_status']}")
     print(f"    Previous Recommendation:    {res['old_recommendation']}")
     print(f"    Rescored Recommendation:    {res['new_recommendation']}")
+    ev = res.get("evidence_verification", {})
+    if ev:
+        print(f"    Live Evidence Verified:     {ev.get('live_evidence_verified', False)}")
+        if ev.get("authenticity_note"):
+            print(f"    Authenticity Note:          {ev['authenticity_note']}")
     print("=" * 96)
 
 
@@ -1760,29 +1765,85 @@ def rescore_report(
 
     # Verify authentic live execution evidence when claiming live mode
     live_evidence_verified = False
+    metadata_consistent = False
+    attestations_verified = False
+    per_case_traces_verified = False
     total_live_latency = 0.0
     total_live_tokens = 0
+
     if mode_val == "live":
+        # 1. Metadata consistency check
+        live_gate_status = str(raw_rep.get("live_gate_status", "")).strip().upper()
+        token_acct_type = str(raw_rep.get("token_accounting_type", "")).strip().lower()
+        if live_gate_status == "COMPLETED" and token_acct_type == "actual_api_usage":
+            metadata_consistent = True
+
+        # 2. Release-gate attestations - fail-closed: missing attestations default to False
+        orig_gate = raw_rep.get("release_gate")
+        if isinstance(orig_gate, dict):
+            orig_credentials = bool(orig_gate.get("credentials_available", False))
+            orig_calls_completed = bool(orig_gate.get("live_provider_call_completed", False))
+            orig_eval_completed = bool(orig_gate.get("live_evaluation_completed", False))
+            orig_complete_eval = bool(orig_gate.get("is_complete_evaluation", False))
+            orig_status = str(orig_gate.get("status", "")).strip().upper()
+
+            if (
+                orig_credentials is True
+                and orig_calls_completed is True
+                and orig_eval_completed is True
+                and orig_complete_eval is True
+                and orig_status
+                not in ("BLOCKED", "PROVIDER_CALL_FAILED", "SIMULATED_TEST_ONLY", "UNKNOWN", "")
+            ):
+                attestations_verified = True
+
+        # 3. Per-case and per-variant execution evidence (variants A, B, C)
+        traces_ok = True
+        for c in raw_cases:
+            if not isinstance(c, dict):
+                traces_ok = False
+                break
+            for v in (VARIANT_A_KEY, VARIANT_B_KEY, VARIANT_C_KEY):
+                vm = c.get(v)
+                if not isinstance(vm, dict):
+                    traces_ok = False
+                    break
+                lat = vm.get("latency_seconds", 0.0)
+                tok = vm.get("tokens_used", 0)
+                if not (isinstance(lat, (int, float)) and lat > 0.0):
+                    traces_ok = False
+                    break
+                if not (isinstance(tok, int) and tok > 0):
+                    traces_ok = False
+                    break
+            if not traces_ok:
+                break
+
+        if traces_ok:
+            per_case_traces_verified = True
+
+        # 4. Compute aggregate totals
         total_live_latency = sum(
             c.get(v, {}).get("latency_seconds", 0.0)
             for c in raw_cases
+            if isinstance(c, dict)
             for v in (VARIANT_A_KEY, VARIANT_B_KEY, VARIANT_C_KEY)
+            if isinstance(c.get(v), dict)
         )
         total_live_tokens = sum(
             c.get(v, {}).get("tokens_used", 0)
             for c in raw_cases
+            if isinstance(c, dict)
             for v in (VARIANT_A_KEY, VARIANT_B_KEY, VARIANT_C_KEY)
+            if isinstance(c.get(v), dict)
         )
-        orig_gate = raw_rep.get("release_gate", {})
-        orig_credentials = orig_gate.get("credentials_available", True)
-        orig_calls_completed = orig_gate.get("live_provider_call_completed", True)
-        orig_status = orig_gate.get("status", "")
+
         if (
-            total_live_latency > 0.0
+            metadata_consistent
+            and attestations_verified
+            and per_case_traces_verified
+            and total_live_latency > 0.0
             and total_live_tokens > 0
-            and orig_credentials is True
-            and orig_calls_completed is True
-            and orig_status not in ("BLOCKED", "PROVIDER_CALL_FAILED", "SIMULATED_TEST_ONLY")
         ):
             live_evidence_verified = True
 
@@ -2006,14 +2067,26 @@ def rescore_report(
         new_gate["is_offline_rescore"] = True
         new_gate["live_evidence_verified"] = False
     elif not live_evidence_verified:
+        failures: list[str] = []
+        if not metadata_consistent:
+            failures.append("Execution metadata inconsistent with authentic live execution")
+        if not attestations_verified:
+            failures.append("Required live execution attestations missing or rejected")
+        if not per_case_traces_verified:
+            failures.append("Per-case or per-variant execution traces missing or zeroed")
+        if not failures:
+            failures.append("Live execution traces could not be verified")
+
         new_gate = {
             "status": "UNVERIFIED_LIVE_EVIDENCE",
             "recommendation": (
-                "NO-GO (Unverified Live Evidence: Report lacks valid latency/token traces)"
+                "NO-GO (Unverified Live Evidence: Report lacks valid per-case/variant traces, "
+                "required live execution attestations, or consistent metadata)"
             ),
             "summary": (
                 "Offline rescoring failed closed: report claims live execution mode "
-                "but lacks verifiable latency or token traces."
+                "but lacks verifiable per-case/variant traces, required attestations, "
+                "or consistent metadata."
             ),
             "credentials_available": False,
             "live_provider_call_completed": False,
@@ -2032,7 +2105,7 @@ def rescore_report(
                 "invalid_locations": agg_c.invalid_locations,
                 "invalid_locations_passed": False,
                 "value_add_over_baseline": False,
-                "failures": ["Live execution traces could not be verified"],
+                "failures": failures,
             },
         }
     else:
@@ -2056,7 +2129,9 @@ def rescore_report(
             )
             new_gate["summary"] = (
                 "All automated quality criteria passed based on offline rescoring of verified "
-                "live evidence. Maintainer manual review is required prior to release."
+                "live evidence. Note: Self-reported metrics verify internal consistency but do "
+                "not constitute cryptographic proof; maintainer manual review is required "
+                "prior to release."
             )
 
     rescore_summary: dict[str, Any] = {
@@ -2072,8 +2147,16 @@ def rescore_report(
             "is_complete_suite": is_complete_suite,
             "version_compatible": version_compatible,
             "live_evidence_verified": live_evidence_verified,
+            "metadata_consistent": metadata_consistent,
+            "attestations_verified": attestations_verified,
+            "per_case_traces_verified": per_case_traces_verified,
             "total_live_latency_seconds": round(total_live_latency, 4),
             "total_live_tokens": total_live_tokens,
+            "authenticity_note": (
+                "Self-reported token and timing values confirm internal structural consistency "
+                "and execution attestations, but are not independent cryptographic proof "
+                "of live execution."
+            ),
         },
         "provider": provider_val,
         "model_name": raw_rep.get("model_name", "deepseek-chat"),

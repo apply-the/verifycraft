@@ -496,6 +496,10 @@ def test_offline_rescore_live_deepseek_evaluation() -> None:
     assert rescore_data["execution_mode"] == "live"
     assert rescore_data["is_offline_rescore"] is True
     assert rescore_data["evidence_verification"]["live_evidence_verified"] is True
+    assert rescore_data["evidence_verification"]["metadata_consistent"] is True
+    assert rescore_data["evidence_verification"]["attestations_verified"] is True
+    assert rescore_data["evidence_verification"]["per_case_traces_verified"] is True
+    assert "authenticity_note" in rescore_data["evidence_verification"]
     assert rescore_data["provider"] == "deepseek"
     assert rescore_data["cases_count"] == 16
     assert rescore_data["total_expected_defects"] == 10
@@ -597,6 +601,85 @@ def test_offline_rescore_fails_closed_on_unverified_live_traces(tmp_path: Path) 
     rescore_data = rescore_report(zero_path, verbose=False)
     assert rescore_data["new_gate_status"] == "UNVERIFIED_LIVE_EVIDENCE"
     assert "Unverified Live Evidence" in rescore_data["new_recommendation"]
+
+
+def test_offline_rescore_fails_closed_on_missing_attestations(tmp_path: Path) -> None:
+    """Verifies that missing credentials or call attestations fail closed."""
+    import json
+
+    evidence_path = Path("benchmarks/data/review_eval/reports/live_deepseek_evaluation_raw.json")
+    raw = json.loads(evidence_path.read_text(encoding="utf-8"))
+    # Delete release_gate block entirely
+    del raw["release_gate"]
+    missing_path = tmp_path / "missing_attestations.json"
+    missing_path.write_text(json.dumps(raw), encoding="utf-8")
+
+    rescore_data = rescore_report(missing_path, verbose=False)
+    assert rescore_data["new_gate_status"] == "UNVERIFIED_LIVE_EVIDENCE"
+    assert rescore_data["evidence_verification"]["live_evidence_verified"] is False
+    assert rescore_data["evidence_verification"]["attestations_verified"] is False
+    assert rescore_data["release_gate"]["credentials_available"] is False
+    assert rescore_data["release_gate"]["live_provider_call_completed"] is False
+
+
+def test_offline_rescore_fails_closed_on_single_failed_variant(tmp_path: Path) -> None:
+    """Verifies that even a single missing or zeroed variant in one case fails verification."""
+    import json
+
+    evidence_path = Path("benchmarks/data/review_eval/reports/live_deepseek_evaluation_raw.json")
+    raw = json.loads(evidence_path.read_text(encoding="utf-8"))
+    # Zero out only variant_b in the 5th case (index 4)
+    raw["per_case_metrics"][4]["variant_b"]["tokens_used"] = 0
+    raw["per_case_metrics"][4]["variant_b"]["latency_seconds"] = 0.0
+
+    corrupt_path = tmp_path / "single_failed_variant.json"
+    corrupt_path.write_text(json.dumps(raw), encoding="utf-8")
+
+    rescore_data = rescore_report(corrupt_path, verbose=False)
+    assert rescore_data["new_gate_status"] == "UNVERIFIED_LIVE_EVIDENCE"
+    assert rescore_data["evidence_verification"]["live_evidence_verified"] is False
+    assert rescore_data["evidence_verification"]["per_case_traces_verified"] is False
+
+
+def test_offline_rescore_fails_closed_on_partially_populated_case(tmp_path: Path) -> None:
+    """Verifies that a partially populated or corrupted case fails verification."""
+    import json
+
+    evidence_path = Path("benchmarks/data/review_eval/reports/live_deepseek_evaluation_raw.json")
+    raw = json.loads(evidence_path.read_text(encoding="utf-8"))
+    # Remove variant_c completely from the first case
+    del raw["per_case_metrics"][0]["variant_c"]
+
+    corrupt_path = tmp_path / "partially_populated_case.json"
+    corrupt_path.write_text(json.dumps(raw), encoding="utf-8")
+
+    rescore_data = rescore_report(corrupt_path, verbose=False)
+    assert rescore_data["new_gate_status"] == "UNVERIFIED_LIVE_EVIDENCE"
+    assert rescore_data["evidence_verification"]["live_evidence_verified"] is False
+    assert rescore_data["evidence_verification"]["per_case_traces_verified"] is False
+
+
+def test_offline_rescore_fails_closed_on_simulated_claiming_live(tmp_path: Path) -> None:
+    """Verifies that a simulated report modified to claim live execution fails closed."""
+    import json
+
+    evidence_path = Path("benchmarks/data/review_eval/reports/live_deepseek_evaluation_raw.json")
+    raw = json.loads(evidence_path.read_text(encoding="utf-8"))
+    # Simulate a run that was originally simulated but claims execution_mode='live'
+    raw["execution_mode"] = "live"
+    raw["live_gate_status"] = "BLOCKED (Missing API Credentials)"
+    raw["token_accounting_type"] = "synthetic_estimate"
+    raw["release_gate"]["credentials_available"] = False
+    raw["release_gate"]["live_provider_call_completed"] = False
+
+    tampered_path = tmp_path / "simulated_claiming_live.json"
+    tampered_path.write_text(json.dumps(raw), encoding="utf-8")
+
+    rescore_data = rescore_report(tampered_path, verbose=False)
+    assert rescore_data["new_gate_status"] == "UNVERIFIED_LIVE_EVIDENCE"
+    assert rescore_data["evidence_verification"]["live_evidence_verified"] is False
+    assert rescore_data["evidence_verification"]["metadata_consistent"] is False
+    assert rescore_data["release_gate"]["credentials_available"] is False
 
 
 def test_cli_progress_reporter_quiet_suppression(capsys: pytest.CaptureFixture[str]) -> None:
