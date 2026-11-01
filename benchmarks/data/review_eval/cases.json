@@ -4,7 +4,7 @@
     "name": "Requirement Violation: Token Expiration Check Omitted",
     "split": "dev",
     "category": "requirement_violation",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "provenance": "Reproduced from real auth session bug pattern (PR #4 audit)",
     "base_commit": "1111111111111111111111111111111111111111",
     "head_commit": "2222222222222222222222222222222222222222",
@@ -28,12 +28,23 @@
       "expected_verdict": "has_defects",
       "expected_issues": [
         {
+          "defect_id": "DEFECT-AUTH-EXPIRY",
           "file_path": "src/auth/service.py",
           "line_range": [
             7,
             10
           ],
           "subject_contains": "expiration",
+          "aliases": [
+            "expired",
+            "expires_at",
+            "expiry",
+            "expiration"
+          ],
+          "evidence_anchors": [
+            "expires_at",
+            "authenticate"
+          ],
           "label": "issue",
           "blocking": true,
           "severity": "critical",
@@ -56,7 +67,7 @@
     "name": "Compensating Control: Guard Protects Division",
     "split": "dev",
     "category": "compensating_control",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "provenance": "Reproduced from metrics calculation pull request with guard check",
     "base_commit": "3333333333333333333333333333333333333333",
     "head_commit": "4444444444444444444444444444444444444444",
@@ -94,7 +105,7 @@
     "name": "Logic Regression: Off-by-one in Pagination Slicing",
     "split": "dev",
     "category": "logic_regression",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "provenance": "Common off-by-one boundary regression in pagination APIs",
     "base_commit": "5555555555555555555555555555555555555555",
     "head_commit": "6666666666666666666666666666666666666666",
@@ -118,7 +129,18 @@
           "label": "issue",
           "blocking": true,
           "severity": "high",
-          "rationale": "Slicing to offset + page_size - 1 returns page_size - 1 items."
+          "rationale": "Slicing to offset + page_size - 1 returns page_size - 1 items.",
+          "defect_id": "DEFECT-PAGINATION-OFF-BY-ONE",
+          "aliases": [
+            "pagination",
+            "slice",
+            "off-by-one",
+            "page_size"
+          ],
+          "evidence_anchors": [
+            "paginate_items",
+            "offset"
+          ]
         }
       ],
       "forbidden_false_positives": [],
@@ -133,7 +155,7 @@
     "name": "Clean Refactor: Helper Extraction Without Semantic Change",
     "split": "dev",
     "category": "clean_change",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "provenance": "Clean refactoring PR from standard Python library pattern",
     "base_commit": "7777777777777777777777777777777777777777",
     "head_commit": "8888888888888888888888888888888888888888",
@@ -163,7 +185,7 @@
     "name": "Ambiguous Requirement: Unverifiable 'Reasonably Fast' SLA",
     "split": "dev",
     "category": "ambiguous_requirement",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "provenance": "Realistic ambiguous customer requirement specification",
     "base_commit": "9999999999999999999999999999999999999999",
     "head_commit": "0000000000000000000000000000000000000000",
@@ -203,7 +225,7 @@
     "name": "Security Defect: Non-Constant-Time Secret Comparison",
     "split": "dev",
     "category": "security_sensitive",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "provenance": "CWE-208 timing attack vulnerability pattern in webhook verification",
     "base_commit": "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2",
     "head_commit": "b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3",
@@ -234,7 +256,17 @@
           "label": "issue",
           "blocking": true,
           "severity": "high",
-          "rationale": "computed == expected_sig is vulnerable to timing attacks; use hmac.compare_digest."
+          "rationale": "computed == expected_sig is vulnerable to timing attacks; use hmac.compare_digest.",
+          "defect_id": "DEFECT-CRYPTO-TIMING-ATTACK",
+          "aliases": [
+            "timing",
+            "constant-time",
+            "compare_digest",
+            "hmac"
+          ],
+          "evidence_anchors": [
+            "verify_hmac_signature"
+          ]
         }
       ],
       "forbidden_false_positives": [
@@ -253,7 +285,7 @@
     "name": "API Compatibility: Breaking Positional Parameter Addition",
     "split": "dev",
     "category": "api_compatibility",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "provenance": "Real breaking change regression in public library export API",
     "base_commit": "c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4",
     "head_commit": "d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5",
@@ -277,7 +309,19 @@
           "label": "issue",
           "blocking": true,
           "severity": "high",
-          "rationale": "Adding required positional argument destination breaks existing callers export_data(data)."
+          "rationale": "Adding required positional argument destination breaks existing callers export_data(data).",
+          "defect_id": "DEFECT-API-SIGNATURE-BREAK",
+          "aliases": [
+            "breaking",
+            "signature",
+            "parameter",
+            "backwards-compatible",
+            "default"
+          ],
+          "evidence_anchors": [
+            "export_records",
+            "format_type"
+          ]
         }
       ],
       "forbidden_false_positives": [],
@@ -292,7 +336,7 @@
     "name": "Multi-File Context: Caller Uses Renamed Helper Method",
     "split": "dev",
     "category": "multi_file_context",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "provenance": "Multi-file import mismatch pattern where helper signature changed in separate module",
     "base_commit": "e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6",
     "head_commit": "f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1",
@@ -318,7 +362,19 @@
           "label": "issue",
           "blocking": true,
           "severity": "high",
-          "rationale": "format_order_summary requires currency argument as defined in helpers.py."
+          "rationale": "format_order_summary requires currency argument as defined in helpers.py.",
+          "defect_id": "DEFECT-MULTI-FILE-MISSING-ARG",
+          "aliases": [
+            "argument",
+            "parameter",
+            "missing argument",
+            "call",
+            "calculate_discount"
+          ],
+          "evidence_anchors": [
+            "calculate_discount",
+            "customer_tier"
+          ]
         }
       ],
       "forbidden_false_positives": [],
@@ -333,7 +389,7 @@
     "name": "Missing Edge Case: Unchecked Empty Collection Indexing",
     "split": "dev",
     "category": "missing_edge_case",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "provenance": "Frequent IndexError on empty input collection in data processing",
     "base_commit": "a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1",
     "head_commit": "b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2",
@@ -357,7 +413,19 @@
           "label": "issue",
           "blocking": true,
           "severity": "medium",
-          "rationale": "Direct indexing users[0] without length check raises IndexError when users is empty."
+          "rationale": "Direct indexing users[0] without length check raises IndexError when users is empty.",
+          "defect_id": "DEFECT-EMPTY-COLLECTION-INDEX",
+          "aliases": [
+            "empty",
+            "indexerror",
+            "indexing",
+            "empty list",
+            "empty collection"
+          ],
+          "evidence_anchors": [
+            "users[0]",
+            "get_lead_user_id"
+          ]
         }
       ],
       "forbidden_false_positives": [],
@@ -372,7 +440,7 @@
     "name": "Surrounding Code: Class Attribute Default Breaks Unedited Method",
     "split": "dev",
     "category": "surrounding_code_regression",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "provenance": "Real bug where modifying __init__ default breaks unedited sibling method",
     "base_commit": "c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3",
     "head_commit": "d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4",
@@ -396,7 +464,19 @@
           "label": "issue",
           "blocking": true,
           "severity": "high",
-          "rationale": "Setting default self.timeout to None causes get_timeout_ms() to raise TypeError."
+          "rationale": "Setting default self.timeout to None causes get_timeout_ms() to raise TypeError.",
+          "defect_id": "DEFECT-SIBLING-METHOD-REGRESSION",
+          "aliases": [
+            "none",
+            "timeout",
+            "typeerror",
+            "default",
+            "none *"
+          ],
+          "evidence_anchors": [
+            "get_timeout_ms",
+            "timeout_seconds"
+          ]
         }
       ],
       "forbidden_false_positives": [],
@@ -411,7 +491,7 @@
     "name": "Held-Out: Insecure JWT 'none' Algorithm Allowed",
     "split": "held_out",
     "category": "security_sensitive",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "provenance": "CVE-2015-9235 JWT 'none' algorithm bypass vulnerability reproduction",
     "base_commit": "e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5",
     "head_commit": "f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6",
@@ -442,7 +522,18 @@
           "label": "issue",
           "blocking": true,
           "severity": "critical",
-          "rationale": "Accepting alg='none' allows arbitrary token forgery without signature."
+          "rationale": "Accepting alg='none' allows arbitrary token forgery without signature.",
+          "defect_id": "DEFECT-JWT-ALG-NONE",
+          "aliases": [
+            "none",
+            "algorithm",
+            "alg='none'",
+            "unsigned"
+          ],
+          "evidence_anchors": [
+            "decode_jwt_token",
+            "alg"
+          ]
         }
       ],
       "forbidden_false_positives": [],
@@ -459,7 +550,7 @@
     "name": "Held-Out: Clean Type Annotation Modernization",
     "split": "held_out",
     "category": "clean_change",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "provenance": "PEP 585 / PEP 604 type annotation modernization PR",
     "base_commit": "0101010101010101010101010101010101010101",
     "head_commit": "0202020202020202020202020202020202020202",
@@ -488,7 +579,7 @@
     "name": "Held-Out: Config Loading Inverts Precedence Over Defaults",
     "split": "held_out",
     "category": "multi_file_context",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "provenance": "Config loader bug where defaults override environment variables",
     "base_commit": "0303030303030303030303030303030303030303",
     "head_commit": "0404040404040404040404040404040404040404",
@@ -514,7 +605,19 @@
           "label": "issue",
           "blocking": true,
           "severity": "high",
-          "rationale": "result.update(DEFAULT_SETTINGS) causes defaults to overwrite explicit env_overrides."
+          "rationale": "result.update(DEFAULT_SETTINGS) causes defaults to overwrite explicit env_overrides.",
+          "defect_id": "DEFECT-CONFIG-PRECEDENCE-INVERTED",
+          "aliases": [
+            "precedence",
+            "override",
+            "overwrite",
+            "inversion",
+            "defaults"
+          ],
+          "evidence_anchors": [
+            "load_configuration",
+            "DEFAULT_SETTINGS"
+          ]
         }
       ],
       "forbidden_false_positives": [],
@@ -529,7 +632,7 @@
     "name": "Held-Out: Compensating Control in Imported Authorization Guard",
     "split": "held_out",
     "category": "compensating_control",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "provenance": "Authorization helper encapsulation across module boundary",
     "base_commit": "0505050505050505050505050505050505050505",
     "head_commit": "0606060606060606060606060606060606060606",
@@ -569,7 +672,7 @@
     "name": "Held-Out: Partial Field Migration with Ambiguous Spec",
     "split": "held_out",
     "category": "ambiguous_requirement",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "provenance": "Database schema migration with dual-write fallback",
     "base_commit": "0707070707070707070707070707070707070707",
     "head_commit": "0808080808080808080808080808080808080808",
@@ -609,7 +712,7 @@
     "name": "Held-Out: Broad Exception Masking Silences Persistence Failures",
     "split": "held_out",
     "category": "logic_regression",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "provenance": "Anti-pattern: catch-all except masking critical operational errors",
     "base_commit": "0909090909090909090909090909090909090909",
     "head_commit": "1010101010101010101010101010101010101010",
@@ -633,7 +736,19 @@
           "label": "issue",
           "blocking": true,
           "severity": "high",
-          "rationale": "Bare except Exception silently masks connection and query failures without logging."
+          "rationale": "Bare except Exception silently masks connection and query failures without logging.",
+          "defect_id": "DEFECT-BROAD-EXCEPTION-MASKING",
+          "aliases": [
+            "exception",
+            "bare except",
+            "masking",
+            "silent",
+            "swallow"
+          ],
+          "evidence_anchors": [
+            "persist_audit_log",
+            "except Exception"
+          ]
         }
       ],
       "forbidden_false_positives": [],

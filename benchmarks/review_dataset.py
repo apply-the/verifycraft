@@ -17,6 +17,9 @@ class ExpectedIssue(BaseModel):
     file_path: str
     line_range: list[int] = Field(default_factory=list)
     subject_contains: str
+    aliases: list[str] = Field(default_factory=list)
+    evidence_anchors: list[str] = Field(default_factory=list)
+    defect_id: str | None = None
     label: str = "issue"
     blocking: bool = True
     severity: str = "high"

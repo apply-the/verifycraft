@@ -710,8 +710,11 @@ class ReviewEngine:
         has_violating_findings: bool = False,
     ) -> tuple[RequirementStatus, str]:
         """Validate and normalize provider-supplied requirement assessment."""
+        status_str = raw_a.status.lower().strip().replace("-", "_")
+        if status_str == "satisfied":
+            status_str = RequirementStatus.APPEARS_SATISFIED.value
         try:
-            raw_status = RequirementStatus(raw_a.status.lower())
+            raw_status = RequirementStatus(status_str)
         except ValueError:
             raw_status = RequirementStatus.UNCLEAR
 
