@@ -506,7 +506,13 @@ class ReviewEngine:
 
             for other in sorted_cluster[1:]:
                 if other.subject != primary.subject:
-                    notes.append(f"*(Related perspective [{other.label.value}]: {other.subject})*")
+                    desc_detail = (
+                        f" — {other.description}"
+                        if other.description and other.description.strip() != other.subject.strip()
+                        else ""
+                    )
+                    tag = f"*(Related perspective [{other.label.value}]: "
+                    notes.append(f"{tag}{other.subject}{desc_detail})*")
 
             if notes:
                 merged_desc = f"{merged_desc}\n\n" + "\n\n".join(notes)
@@ -776,6 +782,104 @@ class ReviewEngine:
             f"Requirement '{req_id}' not assessed: no relevant changes in diff context.",
         )
 
+    @staticmethod
+    def _is_proven_violation(
+        f: ReviewFinding,
+        raw_assessment: RawRequirementAssessment | None = None,
+    ) -> bool:
+        """Determine whether a finding constitutes an established requirement violation."""
+        # 1. Blocking findings are by definition established violations
+        if f.blocking:
+            return True
+
+        # 2. Only findings labeled 'issue' can be violations
+        if f.label != ConventionalLabel.ISSUE:
+            return False
+
+        # 3. Clarifying findings or ambiguity markers are not proven violations
+        if ReviewEngine._is_clarifying_finding(f):
+            return False
+
+        # 4. Low-severity and info issues are defensive/speculative code quality suggestions,
+        # not established requirement violations
+        if f.severity in (FindingSeverity.LOW, FindingSeverity.INFO):
+            return False
+
+        # 5. High or Critical severity issues are substantial defects/violations
+        if f.severity in (FindingSeverity.HIGH, FindingSeverity.CRITICAL):
+            return True
+
+        # 6. Medium severity: established violation if the provider assessment does not
+        # contradict with a verified satisfied status, or explicitly confirms non-satisfaction
+        if raw_assessment is not None:
+            raw_status = raw_assessment.status.lower().strip().replace("-", "_")
+            if raw_status in ("satisfied", "appears_satisfied"):
+                # If provider claims satisfied and finding is non-blocking medium,
+                # check if finding explicitly describes a violation rather than code quality
+                subj_lower = f.subject.lower()
+                desc_lower = f.description.lower()
+                violation_terms = (
+                    "violat",
+                    "fails to",
+                    "fail",
+                    "missing required",
+                    "prohibited",
+                    "rejected",
+                    "break",
+                    "broken",
+                )
+                return any(term in subj_lower or term in desc_lower for term in violation_terms)
+
+        return True
+
+    @staticmethod
+    def _is_clarifying_finding(f: ReviewFinding) -> bool:
+        """Check if finding represents a clarification question or specification ambiguity."""
+        if f.label == ConventionalLabel.QUESTION:
+            return True
+        desc_lower = f.description.lower()
+        if "related perspective [question]" in desc_lower:
+            return True
+        subj_lower = f.subject.lower()
+        ambiguity_markers = (
+            "unspecified",
+            "ambiguous",
+            "missing precedence",
+            "priority is unspecified",
+            "precedence is unspecified",
+            "unclear acceptance criteria",
+            "missing acceptance criteria",
+        )
+        return any(marker in subj_lower or marker in desc_lower for marker in ambiguity_markers)
+
+    @staticmethod
+    def _extract_clarification_text(f: ReviewFinding) -> str:
+        """Extract clarification question or ambiguity summary from finding."""
+        if f.label == ConventionalLabel.QUESTION:
+            return f.subject
+
+        m = re.search(
+            r"\*\(Related perspective \[question\]:\s*([^\*\n—\)]+)",
+            f.description,
+            re.IGNORECASE,
+        )
+        if m:
+            return m.group(1).strip()
+
+        for phrase in (
+            "priority is unspecified",
+            "precedence is unspecified",
+            "precedence relative to legacy_id is not explicitly specified",
+            "unspecified priority",
+            "unspecified precedence",
+            "missing acceptance criteria",
+            "ambiguous specification",
+        ):
+            if phrase in f.subject.lower() or phrase in f.description.lower():
+                return f.subject
+
+        return f.subject
+
     def _assess_single_requirement(
         self,
         req: ParsedRequirement,
@@ -785,42 +889,69 @@ class ReviewEngine:
         context: GitReviewContext,
     ) -> RequirementAssessment:
         req_id_clean = req.id.upper()
+        raw_assessment = model_assessments_map.get(req_id_clean)
         all_related_findings = [f for f in deduped_findings if req.id in f.requirement_ids]
-        violating_findings = [
-            f for f in all_related_findings if f.label == ConventionalLabel.ISSUE or f.blocking
-        ]
-        clarifying_findings = [f for f in all_related_findings if f not in violating_findings]
         is_relevant = self._is_requirement_relevant_to_context(req, context)
 
-        # 1. Unresolved violating issues (blocking or label=issue)
-        if violating_findings:
+        proven_violations = [
+            f for f in all_related_findings if self._is_proven_violation(f, raw_assessment)
+        ]
+        clarifying_findings = [f for f in all_related_findings if self._is_clarifying_finding(f)]
+
+        # 1. Established, sufficiently evidenced requirement violations
+        if proven_violations:
             status = RequirementStatus.NOT_SATISFIED
-            finding_ids = ", ".join(f.id for f in violating_findings)
+            finding_ids = ", ".join(f.id for f in proven_violations)
             explanation = (
                 f"Requirement not satisfied: unresolved issue(s) identified ({finding_ids})."
             )
-        # 2. Positive evidence via verified compensating controls
+        # 2. Positive evidence via verified compensating controls in context
         elif any(req.id in note for note in dismissal_notes):
             status = RequirementStatus.APPEARS_SATISFIED
             explanation = (
                 "[Grounding: Statically detected compensating control in context] "
                 "Requirement verified satisfied via compensating controls in context."
             )
-        # 3. Provider-supplied assessment validated against context
-        elif req_id_clean in model_assessments_map:
+        # 3. Ambiguous specifications or unresolved clarification questions
+        elif clarifying_findings:
+            status = RequirementStatus.UNCLEAR
+            q_summaries = [self._extract_clarification_text(f) for f in clarifying_findings]
+            unique_summaries = list(dict.fromkeys(q_summaries))
+            q_text = (
+                "; ".join(unique_summaries)
+                if unique_summaries
+                else f"unresolved questions ({', '.join(f.id for f in clarifying_findings)})"
+            )
+            is_spec_ambiguity = any(
+                any(
+                    k in s.lower()
+                    for k in (
+                        "precedence",
+                        "priority",
+                        "acceptance criteria",
+                        "unspecified",
+                        "ambiguous",
+                    )
+                )
+                for s in unique_summaries
+            )
+            if is_spec_ambiguity:
+                explanation = (
+                    f"Requirement '{req.id}' is unclear: specification does not establish "
+                    f"clear precedence or acceptance criteria ({q_text})."
+                )
+            else:
+                explanation = (
+                    f"Requirement '{req.id}' has unresolved questions or suggestions ({q_text})."
+                )
+        # 4. Provider-supplied assessment validated against context
+        elif raw_assessment is not None:
             status, explanation = self._assess_from_provider(
-                model_assessments_map[req_id_clean],
+                raw_assessment,
                 req.id,
                 is_relevant,
                 context,
-                has_violating_findings=bool(violating_findings),
-            )
-        # 4. Clarification questions or suggestions without explicit provider assessment
-        elif clarifying_findings:
-            status = RequirementStatus.UNCLEAR
-            q_ids = ", ".join(f.id for f in clarifying_findings)
-            explanation = (
-                f"Requirement '{req.id}' has unresolved questions or suggestions ({q_ids})."
+                has_violating_findings=bool(proven_violations),
             )
         # 5. Fallback: never silently consider unexamined requirement satisfied
         else:
