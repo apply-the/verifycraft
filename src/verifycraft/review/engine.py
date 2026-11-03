@@ -866,18 +866,6 @@ class ReviewEngine:
         if m:
             return m.group(1).strip()
 
-        for phrase in (
-            "priority is unspecified",
-            "precedence is unspecified",
-            "precedence relative to legacy_id is not explicitly specified",
-            "unspecified priority",
-            "unspecified precedence",
-            "missing acceptance criteria",
-            "ambiguous specification",
-        ):
-            if phrase in f.subject.lower() or phrase in f.description.lower():
-                return f.subject
-
         return f.subject
 
     def _assess_single_requirement(

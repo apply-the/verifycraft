@@ -384,3 +384,118 @@ def test_req_math_01_and_req_auth_02_preservation() -> None:
 
         assert expected_req in req_map
         assert req_map[expected_req].status == RequirementStatus.APPEARS_SATISFIED
+
+
+def test_is_proven_violation_medium_with_satisfied_raw_assessment() -> None:
+    """Medium-severity finding with violation terms vs without violation terms when satisfied."""
+    raw_sat = RawRequirementAssessment(
+        requirement_id="REQ-01",
+        status="satisfied",
+        explanation="Satisfied.",
+    )
+
+    finding_with_violation = ReviewFinding(
+        id="f-viol",
+        file_path="src/a.py",
+        line=1,
+        label=ConventionalLabel.ISSUE,
+        subject="Breaks interface contract",
+        description="Fails to return expected payload.",
+        severity=FindingSeverity.MEDIUM,
+        blocking=False,
+    )
+    assert ReviewEngine._is_proven_violation(finding_with_violation, raw_sat) is True
+    assert ReviewEngine._is_proven_violation(finding_with_violation, None) is True
+
+    raw_unclear = RawRequirementAssessment(
+        requirement_id="REQ-01",
+        status="unclear",
+        explanation="Unclear.",
+    )
+    assert ReviewEngine._is_proven_violation(finding_with_violation, raw_unclear) is True
+
+    finding_without_violation = ReviewFinding(
+        id="f-nit",
+        file_path="src/a.py",
+        line=1,
+        label=ConventionalLabel.ISSUE,
+        subject="Variable naming style",
+        description="Consider using snake_case for consistency.",
+        severity=FindingSeverity.MEDIUM,
+        blocking=False,
+    )
+    assert ReviewEngine._is_proven_violation(finding_without_violation, raw_sat) is False
+
+
+def test_deduplication_description_formatting() -> None:
+    """Deduplication formats description notes with and without detail."""
+    engine = ReviewEngine()
+    primary = ReviewFinding(
+        id="f-prim",
+        file_path="src/a.py",
+        line=10,
+        label=ConventionalLabel.ISSUE,
+        subject="Issue in `process_data`",
+        description="Primary desc",
+        severity=FindingSeverity.HIGH,
+        blocking=True,
+    )
+    # other with identical subject and description (desc_detail is empty)
+    other_identical = ReviewFinding(
+        id="f-other1",
+        file_path="src/a.py",
+        line=10,
+        label=ConventionalLabel.QUESTION,
+        subject="Question about `process_data`",
+        description="Question about `process_data`",
+        severity=FindingSeverity.MEDIUM,
+        blocking=False,
+    )
+    deduped = engine._deduplicate_findings([primary, other_identical])
+    assert len(deduped) == 1
+    expected_tag = "*(Related perspective [question]: Question about `process_data`)*"
+    assert expected_tag in deduped[0].description
+
+    f_ambig = ReviewFinding(
+        id="f-ambig",
+        file_path="src/a.py",
+        line=1,
+        label=ConventionalLabel.ISSUE,
+        subject="Precedence is unspecified",
+        description="No related perspective tag here.",
+        severity=FindingSeverity.MEDIUM,
+        blocking=False,
+    )
+    assert ReviewEngine._extract_clarification_text(f_ambig) == "Precedence is unspecified"
+
+
+def test_assess_single_requirement_non_spec_ambiguity() -> None:
+    """Clarification question without specification keywords uses generic clarification format."""
+    engine = ReviewEngine()
+    req = ParsedRequirement(
+        id="REQ-LOG-01",
+        text="Application events should be logged.",
+        source_file="docs/logging.md",
+    )
+    question = ReviewFinding(
+        id="rev-q-gen",
+        file_path="src/logger.py",
+        line=5,
+        label=ConventionalLabel.QUESTION,
+        subject="Should we emit an audit log entry here?",
+        description="Audit logging might be appropriate.",
+        severity=FindingSeverity.LOW,
+        blocking=False,
+        requirement_ids=["REQ-LOG-01"],
+    )
+    context = _make_dummy_context("src/logger.py")
+    assessment = engine._assess_single_requirement(
+        req=req,
+        model_assessments_map={},
+        deduped_findings=[question],
+        dismissal_notes=[],
+        context=context,
+    )
+    assert assessment.status == RequirementStatus.UNCLEAR
+    assert "has unresolved questions or suggestions" in assessment.explanation
+    assert "Should we emit an audit log entry here?" in assessment.explanation
