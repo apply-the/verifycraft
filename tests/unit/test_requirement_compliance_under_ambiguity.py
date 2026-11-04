@@ -386,45 +386,239 @@ def test_req_math_01_and_req_auth_02_preservation() -> None:
         assert req_map[expected_req].status == RequirementStatus.APPEARS_SATISFIED
 
 
-def test_is_proven_violation_medium_with_satisfied_raw_assessment() -> None:
-    """Medium-severity finding with violation terms vs without violation terms when satisfied."""
+def test_is_proven_violation_mandatory_vs_recommendation() -> None:
+    """Mandatory requirements treat concrete issues as violations; recommendations do not."""
+    req_mandatory = ParsedRequirement(
+        id="REQ-01",
+        text="The service must validate tokens before processing.",
+        source_file="docs/spec.md",
+    )
+    req_recommendation = ParsedRequirement(
+        id="REQ-02",
+        text="The service should log debug events during migration.",
+        source_file="docs/spec.md",
+    )
     raw_sat = RawRequirementAssessment(
         requirement_id="REQ-01",
         status="satisfied",
         explanation="Satisfied.",
     )
 
-    finding_with_violation = ReviewFinding(
-        id="f-viol",
+    finding = ReviewFinding(
+        id="f-issue",
         file_path="src/a.py",
         line=1,
         label=ConventionalLabel.ISSUE,
-        subject="Breaks interface contract",
-        description="Fails to return expected payload.",
-        severity=FindingSeverity.MEDIUM,
+        subject="Missing check",
+        description="Check is omitted.",
+        severity=FindingSeverity.LOW,
         blocking=False,
     )
-    assert ReviewEngine._is_proven_violation(finding_with_violation, raw_sat) is True
-    assert ReviewEngine._is_proven_violation(finding_with_violation, None) is True
+    # Mandatory requirement: severity=low finding is still a proven violation
+    assert ReviewEngine._is_proven_violation(finding, req_mandatory, raw_sat) is True
+    assert ReviewEngine._is_proven_violation(finding, req_mandatory, None) is True
 
     raw_unclear = RawRequirementAssessment(
         requirement_id="REQ-01",
         status="unclear",
         explanation="Unclear.",
     )
-    assert ReviewEngine._is_proven_violation(finding_with_violation, raw_unclear) is True
+    assert ReviewEngine._is_proven_violation(finding, req_mandatory, raw_unclear) is True
 
-    finding_without_violation = ReviewFinding(
-        id="f-nit",
-        file_path="src/a.py",
-        line=1,
+    # Recommendation with provider claiming satisfied does not treat non-blocking issue as violation
+    assert ReviewEngine._is_proven_violation(finding, req_recommendation, raw_sat) is False
+
+
+def test_adversarial_low_severity_issue_on_mandatory_requirement() -> None:
+    """Low-severity non-blocking finding describing concrete violation of mandatory requirement.
+
+    Adversarial False Negative 1: severity alone must not disqualify it.
+    """
+    engine = ReviewEngine()
+    req = ParsedRequirement(
+        id="REQ-AUDIT-01",
+        text="Authentication failures must be logged at WARN level.",
+        source_file="docs/audit.md",
+    )
+    low_sev_defect = ReviewFinding(
+        id="rev-audit01",
+        file_path="src/auth/service.py",
+        line=10,
         label=ConventionalLabel.ISSUE,
-        subject="Variable naming style",
-        description="Consider using snake_case for consistency.",
+        subject="Authentication failures are not logged",
+        description="Logger call is omitted on invalid credentials.",
+        severity=FindingSeverity.LOW,
+        blocking=False,
+        requirement_ids=["REQ-AUDIT-01"],
+        evidence_status=EvidenceStatus.MODEL_INFERRED,
+    )
+    # Contradictory provider assessment claiming satisfied
+    raw_assessments = {
+        "REQ-AUDIT-01": RawRequirementAssessment(
+            requirement_id="REQ-AUDIT-01",
+            status="satisfied",
+            explanation="Authentication flow updated.",
+            related_locations=["src/auth/service.py:10"],
+        )
+    }
+    context = _make_dummy_context("src/auth/service.py")
+
+    assessment = engine._assess_single_requirement(
+        req=req,
+        model_assessments_map=raw_assessments,
+        deduped_findings=[low_sev_defect],
+        dismissal_notes=[],
+        context=context,
+    )
+    # Must NOT be disqualified by low severity; mandatory requirement was violated
+    assert assessment.status == RequirementStatus.NOT_SATISFIED
+    assert "rev-audit01" in assessment.explanation
+
+
+def test_adversarial_secondary_question_merged_into_issue() -> None:
+    """Secondary question merged during deduplication must not erase an established violation.
+
+    Adversarial False Negative 2: finding must remain classified as a defect.
+    """
+    engine = ReviewEngine()
+    req = ParsedRequirement(
+        id="REQ-SEC-01",
+        text="Cryptographic signature validation must use constant-time comparison.",
+        source_file="docs/crypto.md",
+    )
+    high_defect = ReviewFinding(
+        id="rev-sec01",
+        file_path="src/crypto/signatures.py",
+        line=6,
+        label=ConventionalLabel.ISSUE,
+        subject="Non-constant-time comparison enables timing attack",
+        description=(
+            "Uses == operator for secret comparison.\n\n"
+            "*(Related perspective [question]: Should we also benchmark timing?)*"
+        ),
+        severity=FindingSeverity.HIGH,
+        blocking=False,
+        requirement_ids=["REQ-SEC-01"],
+        evidence_status=EvidenceStatus.MODEL_INFERRED,
+    )
+    tangential_question = ReviewFinding(
+        id="rev-sec02",
+        file_path="src/crypto/signatures.py",
+        line=6,
+        label=ConventionalLabel.QUESTION,
+        subject="Should we also benchmark timing?",
+        description="Could run benchmark tests.",
+        severity=FindingSeverity.LOW,
+        blocking=False,
+        requirement_ids=["REQ-SEC-01"],
+        evidence_status=EvidenceStatus.MODEL_INFERRED,
+    )
+    context = _make_dummy_context("src/crypto/signatures.py")
+
+    # Evaluated with both pre-dedup findings and deduped findings
+    assessment = engine._assess_single_requirement(
+        req=req,
+        model_assessments_map={},
+        deduped_findings=[high_defect],
+        dismissal_notes=[],
+        context=context,
+        all_findings=[high_defect, tangential_question],
+    )
+    assert assessment.status == RequirementStatus.NOT_SATISFIED
+    assert "rev-sec01" in assessment.explanation
+
+    # Evaluated even if caller only provides deduped findings with merged question note
+    assessment_dedup_only = engine._assess_single_requirement(
+        req=req,
+        model_assessments_map={},
+        deduped_findings=[high_defect],
+        dismissal_notes=[],
+        context=context,
+    )
+    assert assessment_dedup_only.status == RequirementStatus.NOT_SATISFIED
+    assert "rev-sec01" in assessment_dedup_only.explanation
+
+
+def test_adversarial_contradictory_provider_satisfied_with_ambiguity() -> None:
+    """Provider claims satisfied, but clarification question exposes specification ambiguity."""
+    engine = ReviewEngine()
+    req = ParsedRequirement(
+        id="REQ-DATA-01",
+        text="Accounts should adopt UUID identifiers during migration.",
+        source_file="docs/migration.md",
+    )
+    question = ReviewFinding(
+        id="rev-q01",
+        file_path="src/models/account.py",
+        line=3,
+        label=ConventionalLabel.QUESTION,
+        subject="UUID vs legacy_id priority is unspecified",
+        description="Specification does not define precedence between identifiers.",
         severity=FindingSeverity.MEDIUM,
         blocking=False,
+        requirement_ids=["REQ-DATA-01"],
     )
-    assert ReviewEngine._is_proven_violation(finding_without_violation, raw_sat) is False
+    issue_nit = ReviewFinding(
+        id="rev-i01",
+        file_path="src/models/account.py",
+        line=3,
+        label=ConventionalLabel.ISSUE,
+        subject="Truthiness check masks empty string",
+        description="Empty UUID string treated as missing.",
+        severity=FindingSeverity.LOW,
+        blocking=False,
+        requirement_ids=["REQ-DATA-01"],
+    )
+    raw_assessments = {
+        "REQ-DATA-01": RawRequirementAssessment(
+            requirement_id="REQ-DATA-01",
+            status="satisfied",
+            explanation="UUID adopted; priority ambiguity noted.",
+            related_locations=["src/models/account.py:3"],
+        )
+    }
+    context = _make_dummy_context("src/models/account.py")
+
+    assessment = engine._assess_single_requirement(
+        req=req,
+        model_assessments_map=raw_assessments,
+        deduped_findings=[issue_nit],
+        dismissal_notes=[],
+        context=context,
+        all_findings=[question, issue_nit],
+    )
+    assert assessment.status == RequirementStatus.UNCLEAR
+    assert "specification does not establish clear precedence" in assessment.explanation
+
+
+def test_adversarial_contradictory_provider_not_satisfied_without_evidence() -> None:
+    """Provider claims not_satisfied without pointing to any issue or valid diff location."""
+    engine = ReviewEngine()
+    req = ParsedRequirement(
+        id="REQ-AUTH-09",
+        text="All sessions must be cryptographically signed.",
+        source_file="docs/auth.md",
+    )
+    # Contradictory provider claim with no issues in review and invalid location
+    raw_assessments = {
+        "REQ-AUTH-09": RawRequirementAssessment(
+            requirement_id="REQ-AUTH-09",
+            status="not_satisfied",
+            explanation="I suspect sessions are not signed.",
+            related_locations=["nonexistent_file.py:999"],
+        )
+    }
+    context = _make_dummy_context("src/models/account.py")
+
+    assessment = engine._assess_single_requirement(
+        req=req,
+        model_assessments_map=raw_assessments,
+        deduped_findings=[],
+        dismissal_notes=[],
+        context=context,
+    )
+    assert assessment.status == RequirementStatus.UNCLEAR
+    assert "marked unclear for clarification" in assessment.explanation
 
 
 def test_deduplication_description_formatting() -> None:

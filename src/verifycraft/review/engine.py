@@ -228,6 +228,7 @@ class ReviewEngine:
             deduped_findings=deduped_findings,
             dismissal_notes=dismissal_notes,
             context=context,
+            all_findings=findings,
         )
 
         # 9. Compute Resource Usage
@@ -782,55 +783,21 @@ class ReviewEngine:
             f"Requirement '{req_id}' not assessed: no relevant changes in diff context.",
         )
 
-    @staticmethod
-    def _is_proven_violation(
-        f: ReviewFinding,
-        raw_assessment: RawRequirementAssessment | None = None,
-    ) -> bool:
-        """Determine whether a finding constitutes an established requirement violation."""
-        # 1. Blocking findings are by definition established violations
-        if f.blocking:
-            return True
+    MANDATORY_TERMS = {
+        "must",
+        "shall",
+        "required",
+        "mandatory",
+        "strictly",
+        "enforce",
+        "prohibit",
+    }
 
-        # 2. Only findings labeled 'issue' can be violations
-        if f.label != ConventionalLabel.ISSUE:
-            return False
-
-        # 3. Clarifying findings or ambiguity markers are not proven violations
-        if ReviewEngine._is_clarifying_finding(f):
-            return False
-
-        # 4. Low-severity and info issues are defensive/speculative code quality suggestions,
-        # not established requirement violations
-        if f.severity in (FindingSeverity.LOW, FindingSeverity.INFO):
-            return False
-
-        # 5. High or Critical severity issues are substantial defects/violations
-        if f.severity in (FindingSeverity.HIGH, FindingSeverity.CRITICAL):
-            return True
-
-        # 6. Medium severity: established violation if the provider assessment does not
-        # contradict with a verified satisfied status, or explicitly confirms non-satisfaction
-        if raw_assessment is not None:
-            raw_status = raw_assessment.status.lower().strip().replace("-", "_")
-            if raw_status in ("satisfied", "appears_satisfied"):
-                # If provider claims satisfied and finding is non-blocking medium,
-                # check if finding explicitly describes a violation rather than code quality
-                subj_lower = f.subject.lower()
-                desc_lower = f.description.lower()
-                violation_terms = (
-                    "violat",
-                    "fails to",
-                    "fail",
-                    "missing required",
-                    "prohibited",
-                    "rejected",
-                    "break",
-                    "broken",
-                )
-                return any(term in subj_lower or term in desc_lower for term in violation_terms)
-
-        return True
+    @classmethod
+    def _is_mandatory_requirement(cls, req: ParsedRequirement) -> bool:
+        """Check if requirement expresses a mandatory constraint per RFC 2119 semantics."""
+        words = set(re.findall(r"\b[a-zA-Z_]+\b", req.text.lower()))
+        return bool(words & cls.MANDATORY_TERMS)
 
     @staticmethod
     def _is_clarifying_finding(f: ReviewFinding) -> bool:
@@ -838,8 +805,6 @@ class ReviewEngine:
         if f.label == ConventionalLabel.QUESTION:
             return True
         desc_lower = f.description.lower()
-        if "related perspective [question]" in desc_lower:
-            return True
         subj_lower = f.subject.lower()
         ambiguity_markers = (
             "unspecified",
@@ -851,6 +816,40 @@ class ReviewEngine:
             "missing acceptance criteria",
         )
         return any(marker in subj_lower or marker in desc_lower for marker in ambiguity_markers)
+
+    @classmethod
+    def _is_proven_violation(
+        cls,
+        f: ReviewFinding,
+        req: ParsedRequirement | None = None,
+        raw_assessment: RawRequirementAssessment | None = None,
+    ) -> bool:
+        """Determine whether a finding constitutes an established requirement violation."""
+        # 1. Merge-blocking findings are by definition established violations
+        if f.blocking:
+            return True
+
+        # 2. Only findings labeled 'issue' can be violations
+        if f.label != ConventionalLabel.ISSUE:
+            return False
+
+        # 3. If requirement is mandatory per RFC 2119, any concrete issue is an established
+        # violation (severity alone does not disqualify it, and secondary questions do not erase it)
+        if req is not None and cls._is_mandatory_requirement(req):
+            return True
+
+        # 4. If provider assessment confirms non-satisfaction, issue is corroborated
+        if raw_assessment is not None:
+            raw_status = raw_assessment.status.lower().strip().replace("-", "_")
+            if raw_status in ("not_satisfied", "violated"):
+                return True
+            if raw_status in ("satisfied", "appears_satisfied"):
+                # If provider claims satisfied on a non-mandatory recommendation with ambiguity,
+                # the issue does not prove violation over specification ambiguity
+                return req is None or cls._is_mandatory_requirement(req)
+
+        # 5. Default for unassessed/model-free issues on requirements
+        return True
 
     @staticmethod
     def _extract_clarification_text(f: ReviewFinding) -> str:
@@ -875,16 +874,33 @@ class ReviewEngine:
         deduped_findings: list[ReviewFinding],
         dismissal_notes: list[str],
         context: GitReviewContext,
+        all_findings: list[ReviewFinding] | None = None,
     ) -> RequirementAssessment:
         req_id_clean = req.id.upper()
         raw_assessment = model_assessments_map.get(req_id_clean)
-        all_related_findings = [f for f in deduped_findings if req.id in f.requirement_ids]
+
+        # Use un-deduplicated findings when available to prevent presentation clustering
+        # from suppressing or altering constituent perspectives
+        source_findings = all_findings if all_findings is not None else deduped_findings
+        all_related_findings = [f for f in source_findings if req.id in f.requirement_ids]
         is_relevant = self._is_requirement_relevant_to_context(req, context)
 
+        # 1. Distinguish established violations from questions / ambiguities
         proven_violations = [
-            f for f in all_related_findings if self._is_proven_violation(f, raw_assessment)
+            f for f in all_related_findings if self._is_proven_violation(f, req, raw_assessment)
         ]
         clarifying_findings = [f for f in all_related_findings if self._is_clarifying_finding(f)]
+
+        # Also inspect deduped_findings for any merged question perspectives
+        # when all_findings was not supplied
+        if all_findings is None:
+            for f in deduped_findings:
+                if (
+                    req.id in f.requirement_ids
+                    and f not in clarifying_findings
+                    and "related perspective [question]" in f.description.lower()
+                ):
+                    clarifying_findings.append(f)
 
         # 1. Established, sufficiently evidenced requirement violations
         if proven_violations:
@@ -901,9 +917,15 @@ class ReviewEngine:
                 "Requirement verified satisfied via compensating controls in context."
             )
         # 3. Ambiguous specifications or unresolved clarification questions
-        elif clarifying_findings:
+        elif clarifying_findings or (
+            raw_assessment is not None
+            and raw_assessment.status.lower().strip().replace("-", "_")
+            in ("unclear", "partially_satisfied")
+        ):
             status = RequirementStatus.UNCLEAR
             q_summaries = [self._extract_clarification_text(f) for f in clarifying_findings]
+            if not q_summaries and raw_assessment and raw_assessment.explanation:
+                q_summaries = [raw_assessment.explanation]
             unique_summaries = list(dict.fromkeys(q_summaries))
             q_text = (
                 "; ".join(unique_summaries)
@@ -951,7 +973,7 @@ class ReviewEngine:
             text=req.text,
             status=status,
             explanation=explanation,
-            related_finding_ids=[f.id for f in all_related_findings],
+            related_finding_ids=[f.id for f in deduped_findings if req.id in f.requirement_ids],
         )
 
     def _build_requirement_assessments(
@@ -961,6 +983,7 @@ class ReviewEngine:
         deduped_findings: list[ReviewFinding],
         dismissal_notes: list[str],
         context: GitReviewContext,
+        all_findings: list[ReviewFinding] | None = None,
     ) -> list[RequirementAssessment]:
         if not parsed_reqs:
             return [
@@ -987,6 +1010,7 @@ class ReviewEngine:
                 deduped_findings=deduped_findings,
                 dismissal_notes=dismissal_notes,
                 context=context,
+                all_findings=all_findings,
             )
             for req in parsed_reqs
         ]
