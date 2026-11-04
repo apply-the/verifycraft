@@ -428,6 +428,27 @@ def test_is_proven_violation_mandatory_vs_recommendation() -> None:
     # Recommendation with provider claiming satisfied does not treat non-blocking issue as violation
     assert ReviewEngine._is_proven_violation(finding, req_recommendation, raw_sat) is False
 
+    # Recommendation with provider claiming not_satisfied corroborates violation
+    raw_not_sat = RawRequirementAssessment(
+        requirement_id="REQ-02",
+        status="not_satisfied",
+        explanation="Not satisfied.",
+    )
+    assert ReviewEngine._is_proven_violation(finding, req_recommendation, raw_not_sat) is True
+    # Recommendation without provider assessment defaults to True
+    assert ReviewEngine._is_proven_violation(finding, req_recommendation, None) is True
+
+    # Clarification text extraction from merged perspective tag
+    finding_with_tag = ReviewFinding(
+        id="f-tag",
+        file_path="src/a.py",
+        line=1,
+        label=ConventionalLabel.ISSUE,
+        subject="Issue subject",
+        description="Issue desc\n\n*(Related perspective [question]: Is precedence defined?)*",
+    )
+    assert ReviewEngine._extract_clarification_text(finding_with_tag) == "Is precedence defined?"
+
 
 def test_adversarial_low_severity_issue_on_mandatory_requirement() -> None:
     """Low-severity non-blocking finding describing concrete violation of mandatory requirement.
@@ -663,12 +684,63 @@ def test_deduplication_description_formatting() -> None:
     assert ReviewEngine._extract_clarification_text(f_ambig) == "Precedence is unspecified"
 
 
+def test_assess_single_requirement_provider_unclear_without_findings() -> None:
+    """Provider assessment has unclear status without candidate findings."""
+    engine = ReviewEngine()
+    req = ParsedRequirement(
+        id="REQ-UNCLEAR-01",
+        text="Processing should be efficient.",
+        source_file="docs/spec.md",
+    )
+    raw_assessments = {
+        "REQ-UNCLEAR-01": RawRequirementAssessment(
+            requirement_id="REQ-UNCLEAR-01",
+            status="unclear",
+            explanation="Unclear acceptance criteria for efficiency.",
+            related_locations=["src/models/account.py:3"],
+        )
+    }
+    context = _make_dummy_context("src/models/account.py")
+
+    assessment = engine._assess_single_requirement(
+        req=req,
+        model_assessments_map=raw_assessments,
+        deduped_findings=[],
+        dismissal_notes=[],
+        context=context,
+    )
+    assert assessment.status == RequirementStatus.UNCLEAR
+    assert "Unclear acceptance criteria for efficiency." in assessment.explanation
+
+
+def test_assess_single_requirement_unexamined_fallback() -> None:
+    """Requirement not examined by provider and not having findings falls back safely."""
+    engine = ReviewEngine()
+    req = ParsedRequirement(
+        id="REQ-UNEX-01",
+        text="Processing must be deterministic.",
+        source_file="docs/spec.md",
+    )
+    context = _make_dummy_context("src/models/account.py")
+
+    assessment = engine._assess_single_requirement(
+        req=req,
+        model_assessments_map={},
+        deduped_findings=[],
+        dismissal_notes=[],
+        context=context,
+    )
+    # Context does not mention REQ-UNEX-01 tokens
+    assert assessment.status == RequirementStatus.NOT_ASSESSED
+    assert "not assessed" in assessment.explanation.lower()
+
+
 def test_assess_single_requirement_non_spec_ambiguity() -> None:
     """Clarification question without specification keywords uses generic clarification format."""
     engine = ReviewEngine()
     req = ParsedRequirement(
         id="REQ-LOG-01",
-        text="Application events should be logged.",
+        text="Application events must be logged.",
         source_file="docs/logging.md",
     )
     question = ReviewFinding(
