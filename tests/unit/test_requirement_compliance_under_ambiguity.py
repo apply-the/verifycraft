@@ -916,3 +916,113 @@ def test_adversarial_shared_vocabulary_documentation_issue_not_proven_violation(
     # must NOT force NOT_SATISFIED
     assert assessment.status == RequirementStatus.APPEARS_SATISFIED
     assert "Token expiration logic rejects expired tokens" in assessment.explanation
+
+
+def test_has_requirement_evidence_coverage_branches() -> None:
+    """Comprehensive branch coverage for _has_requirement_evidence."""
+    # 1. Finding does not cite requirement ID
+    req = ParsedRequirement(id="REQ-X", text="Validate input parameters.", source_file="doc.md")
+    f_diff_id = ReviewFinding(
+        id="f1",
+        file_path="src/a.py",
+        line=1,
+        label=ConventionalLabel.ISSUE,
+        subject="Validate input failure",
+        description="Missing validation.",
+        requirement_ids=["REQ-OTHER"],
+    )
+    assert ReviewEngine._has_requirement_evidence(f_diff_id, req) is False
+
+    # 2. Cosmetic finding on requirement that IS about documentation
+    req_doc = ParsedRequirement(
+        id="REQ-DOC-01",
+        text="Public functions must include docstring comments with parameter explanations.",
+        source_file="docs/api.md",
+    )
+    f_doc = ReviewFinding(
+        id="f2",
+        file_path="src/api.py",
+        line=5,
+        label=ConventionalLabel.ISSUE,
+        subject="Docstring parameter explanations missing",
+        description="Public function lacks parameter explanations in docstring.",
+        requirement_ids=["REQ-DOC-01"],
+    )
+    assert ReviewEngine._has_requirement_evidence(f_doc, req_doc) is True
+
+    # 3. Explicit statement: "requirement failed" and "fails REQ-X"
+    f_req_failed = ReviewFinding(
+        id="f3",
+        file_path="src/b.py",
+        line=10,
+        label=ConventionalLabel.ISSUE,
+        subject="Noncompliance detected",
+        description="Requirement failed: token signature is not verified.",
+        requirement_ids=["REQ-X"],
+    )
+    assert ReviewEngine._has_requirement_evidence(f_req_failed, req) is True
+
+    f_fails_id = ReviewFinding(
+        id="f3b",
+        file_path="src/b.py",
+        line=10,
+        label=ConventionalLabel.ISSUE,
+        subject="Violates requirement directly",
+        description="Implementation fails requirement explicitly.",
+        requirement_ids=["REQ-X"],
+    )
+    assert ReviewEngine._has_requirement_evidence(f_fails_id, req) is True
+
+    # 4. Requirement with only generic domain words
+    req_generic = ParsedRequirement(
+        id="REQ-GEN",
+        text="User auth check data.",
+        source_file="doc.md",
+    )
+    f_generic_match = ReviewFinding(
+        id="f4",
+        file_path="src/c.py",
+        line=1,
+        label=ConventionalLabel.ISSUE,
+        subject="User auth missing",
+        description="User auth is omitted.",
+        requirement_ids=["REQ-GEN"],
+    )
+    assert ReviewEngine._has_requirement_evidence(f_generic_match, req_generic) is True
+
+    # 5. Empty requirement text
+    req_empty = ParsedRequirement(id="REQ-EMP", text="", source_file="doc.md")
+    f_empty_req = ReviewFinding(
+        id="f5",
+        file_path="src/c.py",
+        line=1,
+        label=ConventionalLabel.ISSUE,
+        subject="Something broken",
+        description="Details.",
+        requirement_ids=["REQ-EMP"],
+    )
+    assert ReviewEngine._has_requirement_evidence(f_empty_req, req_empty) is True
+
+    # 6. Finding words only consist of generic domain words / stop words
+    f_only_generic = ReviewFinding(
+        id="f6",
+        file_path="src/c.py",
+        line=1,
+        label=ConventionalLabel.ISSUE,
+        subject="User auth data",
+        description="User service check logic.",
+        requirement_ids=["REQ-X"],
+    )
+    assert ReviewEngine._has_requirement_evidence(f_only_generic, req) is False
+
+    # 7. Constraint words do not match (no stem overlap)
+    f_no_stem_match = ReviewFinding(
+        id="f7",
+        file_path="src/c.py",
+        line=1,
+        label=ConventionalLabel.ISSUE,
+        subject="Memory allocation buffer overflow",
+        description="Heap allocations exceed hardware capacity.",
+        requirement_ids=["REQ-X"],
+    )
+    assert ReviewEngine._has_requirement_evidence(f_no_stem_match, req) is False

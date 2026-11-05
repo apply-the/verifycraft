@@ -897,8 +897,6 @@ class ReviewEngine:
         }
         constraint_words = {w for w in raw_req_words if w not in cls.GENERIC_DOMAIN_WORDS}
         if not constraint_words:
-            constraint_words = raw_req_words
-        if not constraint_words:
             return True
 
         # 5. Extract domain words from finding (excluding stopwords and generic component terms)
