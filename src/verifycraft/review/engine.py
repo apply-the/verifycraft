@@ -799,6 +799,63 @@ class ReviewEngine:
         words = set(re.findall(r"\b[a-zA-Z_]+\b", req.text.lower()))
         return bool(words & cls.MANDATORY_TERMS)
 
+    @classmethod
+    def _has_requirement_evidence(
+        cls,
+        f: ReviewFinding,
+        req: ParsedRequirement,
+    ) -> bool:
+        """Check if finding provides concrete evidence connecting to the requirement's domain."""
+        # 1. Finding must cite the requirement ID
+        if req.id not in f.requirement_ids:
+            return False
+
+        f_text = f"{f.subject}\n{f.description}".lower()
+
+        # 2. Direct reference to requirement ID (e.g. "req-01", "req-auth-01")
+        if req.id.lower() in f_text:
+            return True
+
+        # 3. Explicit requirement noncompliance statement (e.g. "failed requirement")
+        if re.search(
+            r"\b(?:failed|violat\w*|breach\w*|break\w*|miss\w*)\s+requirement\b",
+            f_text,
+        ):
+            return True
+        if re.search(
+            r"\brequirement\s+(?:failed|violated|not\s+met|unfulfilled)\b",
+            f_text,
+        ):
+            return True
+
+        # 4. Extract meaningful domain stems from requirement ID and text
+        req_words = {
+            w.lower()
+            for w in re.findall(r"\b[a-zA-Z_]{3,}\b", f"{req.id} {req.text}")
+            if w.lower() not in cls.STOP_WORDS
+        }
+        if not req_words:
+            return True
+
+        # 5. Extract words from finding subject and description
+        finding_words = {
+            w.lower()
+            for w in re.findall(r"\b[a-zA-Z_]{3,}\b", f_text)
+            if w.lower() not in cls.STOP_WORDS
+        }
+
+        # 6. Check for direct word matches or root/stem overlaps (min 3 chars)
+        if req_words & finding_words:
+            return True
+
+        for rw in req_words:
+            for fw in finding_words:
+                min_len = min(len(rw), len(fw))
+                if min_len >= 3 and (rw.startswith(fw[:3]) or fw.startswith(rw[:3])):
+                    return True
+
+        return False
+
     @staticmethod
     def _is_clarifying_finding(f: ReviewFinding) -> bool:
         """Check if finding represents a clarification question or specification ambiguity."""
@@ -833,22 +890,31 @@ class ReviewEngine:
         if f.label != ConventionalLabel.ISSUE:
             return False
 
-        # 3. If requirement is mandatory per RFC 2119, any concrete issue is an established
-        # violation (severity alone does not disqualify it, and secondary questions do not erase it)
-        if req is not None and cls._is_mandatory_requirement(req):
+        # 3. Finding must have substantive evidence connecting it to the requirement domain
+        if req is not None and not cls._has_requirement_evidence(f, req):
+            return False
+
+        # 4. High or Critical severity findings connected to the requirement demonstrate
+        # concrete noncompliance, regardless of requirement wording (must vs should)
+        # or provider claim
+        if f.severity in (FindingSeverity.HIGH, FindingSeverity.CRITICAL):
             return True
 
-        # 4. If provider assessment confirms non-satisfaction, issue is corroborated
+        # 5. If provider assessment confirms non-satisfaction, issue is corroborated
         if raw_assessment is not None:
             raw_status = raw_assessment.status.lower().strip().replace("-", "_")
             if raw_status in ("not_satisfied", "violated"):
                 return True
-            if raw_status in ("satisfied", "appears_satisfied"):
-                # If provider claims satisfied on a non-mandatory recommendation with ambiguity,
-                # the issue does not prove violation over specification ambiguity
-                return req is None or cls._is_mandatory_requirement(req)
+            # If provider claims satisfied on a non-mandatory recommendation with ambiguity,
+            # a non-blocking low/medium issue does not prove violation over specification ambiguity
+            if (
+                raw_status in ("satisfied", "appears_satisfied")
+                and req is not None
+                and not cls._is_mandatory_requirement(req)
+            ):
+                return False
 
-        # 5. Default for unassessed/model-free issues on requirements
+        # 6. Default for unassessed/model-free issues or mandatory requirements
         return True
 
     @staticmethod

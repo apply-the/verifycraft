@@ -409,10 +409,11 @@ def test_is_proven_violation_mandatory_vs_recommendation() -> None:
         file_path="src/a.py",
         line=1,
         label=ConventionalLabel.ISSUE,
-        subject="Missing check",
-        description="Check is omitted.",
+        subject="Missing token validation",
+        description="Token validation check is omitted.",
         severity=FindingSeverity.LOW,
         blocking=False,
+        requirement_ids=["REQ-01", "REQ-02"],
     )
     # Mandatory requirement: severity=low finding is still a proven violation
     assert ReviewEngine._is_proven_violation(finding, req_mandatory, raw_sat) is True
@@ -426,7 +427,18 @@ def test_is_proven_violation_mandatory_vs_recommendation() -> None:
     assert ReviewEngine._is_proven_violation(finding, req_mandatory, raw_unclear) is True
 
     # Recommendation with provider claiming satisfied does not treat non-blocking issue as violation
-    assert ReviewEngine._is_proven_violation(finding, req_recommendation, raw_sat) is False
+    finding_rec = ReviewFinding(
+        id="f-issue-rec",
+        file_path="src/a.py",
+        line=1,
+        label=ConventionalLabel.ISSUE,
+        subject="Debug events omitted",
+        description="Debug events are not logged during migration.",
+        severity=FindingSeverity.LOW,
+        blocking=False,
+        requirement_ids=["REQ-02"],
+    )
+    assert ReviewEngine._is_proven_violation(finding_rec, req_recommendation, raw_sat) is False
 
     # Recommendation with provider claiming not_satisfied corroborates violation
     raw_not_sat = RawRequirementAssessment(
@@ -434,9 +446,9 @@ def test_is_proven_violation_mandatory_vs_recommendation() -> None:
         status="not_satisfied",
         explanation="Not satisfied.",
     )
-    assert ReviewEngine._is_proven_violation(finding, req_recommendation, raw_not_sat) is True
+    assert ReviewEngine._is_proven_violation(finding_rec, req_recommendation, raw_not_sat) is True
     # Recommendation without provider assessment defaults to True
-    assert ReviewEngine._is_proven_violation(finding, req_recommendation, None) is True
+    assert ReviewEngine._is_proven_violation(finding_rec, req_recommendation, None) is True
 
     # Clarification text extraction from merged perspective tag
     finding_with_tag = ReviewFinding(
@@ -765,3 +777,95 @@ def test_assess_single_requirement_non_spec_ambiguity() -> None:
     assert assessment.status == RequirementStatus.UNCLEAR
     assert "has unresolved questions or suggestions" in assessment.explanation
     assert "Should we emit an audit log entry here?" in assessment.explanation
+
+
+def test_adversarial_high_severity_issue_on_should_requirement_forces_not_satisfied() -> None:
+    """Non-blocking high-severity issue on a 'should' requirement proves noncompliance.
+
+    Neither requirement wording nor provider 'satisfied' status alone may ignore concrete defects.
+    """
+    engine = ReviewEngine()
+    req = ParsedRequirement(
+        id="REQ-DATA-02",
+        text="Data exports should omit sensitive PII fields.",
+        source_file="docs/spec.md",
+    )
+    pii_defect = ReviewFinding(
+        id="rev-pii01",
+        file_path="src/export/service.py",
+        line=15,
+        label=ConventionalLabel.ISSUE,
+        subject="PII fields are exposed in plain text in export",
+        description="Sensitive user fields are included in export payload without sanitization.",
+        severity=FindingSeverity.HIGH,
+        blocking=False,
+        requirement_ids=["REQ-DATA-02"],
+        evidence_status=EvidenceStatus.MODEL_INFERRED,
+    )
+    raw_assessments = {
+        "REQ-DATA-02": RawRequirementAssessment(
+            requirement_id="REQ-DATA-02",
+            status="satisfied",
+            explanation="Data export routine was refactored.",
+            related_locations=["src/export/service.py:15"],
+        )
+    }
+    context = _make_dummy_context("src/export/service.py")
+
+    assessment = engine._assess_single_requirement(
+        req=req,
+        model_assessments_map=raw_assessments,
+        deduped_findings=[pii_defect],
+        dismissal_notes=[],
+        context=context,
+    )
+    # Must force NOT_SATISFIED despite 'should' wording and provider 'satisfied' claim
+    assert assessment.status == RequirementStatus.NOT_SATISFIED
+    assert "rev-pii01" in assessment.explanation
+
+
+def test_adversarial_issue_without_evidence_on_mandatory_requirement_not_treated_as_violation() -> (
+    None
+):
+    """Generic issue without evidence connecting to mandatory requirement is not a proven violation.
+
+    Neither requirement wording alone nor candidate label alone constitutes proof of violation.
+    """
+    engine = ReviewEngine()
+    req = ParsedRequirement(
+        id="REQ-AUTH-01",
+        text="User authentication must reject expired tokens before issuing a session.",
+        source_file="docs/auth.md",
+    )
+    unrelated_issue = ReviewFinding(
+        id="rev-typo01",
+        file_path="src/auth/service.py",
+        line=2,
+        label=ConventionalLabel.ISSUE,
+        subject="Typo in docstring",
+        description="Fix spelling of parameter name in comments.",
+        severity=FindingSeverity.LOW,
+        blocking=False,
+        requirement_ids=["REQ-AUTH-01"],
+        evidence_status=EvidenceStatus.MODEL_INFERRED,
+    )
+    raw_assessments = {
+        "REQ-AUTH-01": RawRequirementAssessment(
+            requirement_id="REQ-AUTH-01",
+            status="satisfied",
+            explanation="Token expiration logic rejects expired tokens before session creation.",
+            related_locations=["src/auth/service.py:2"],
+        )
+    }
+    context = _make_dummy_context("src/auth/service.py")
+
+    assessment = engine._assess_single_requirement(
+        req=req,
+        model_assessments_map=raw_assessments,
+        deduped_findings=[unrelated_issue],
+        dismissal_notes=[],
+        context=context,
+    )
+    # Unrelated cosmetic docstring typo does NOT force NOT_SATISFIED on mandatory requirement
+    assert assessment.status == RequirementStatus.APPEARS_SATISFIED
+    assert "Token expiration logic rejects expired tokens" in assessment.explanation
