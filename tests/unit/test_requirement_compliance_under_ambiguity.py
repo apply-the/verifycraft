@@ -869,3 +869,50 @@ def test_adversarial_issue_without_evidence_on_mandatory_requirement_not_treated
     # Unrelated cosmetic docstring typo does NOT force NOT_SATISFIED on mandatory requirement
     assert assessment.status == RequirementStatus.APPEARS_SATISFIED
     assert "Token expiration logic rejects expired tokens" in assessment.explanation
+
+
+def test_adversarial_shared_vocabulary_documentation_issue_not_proven_violation() -> None:
+    """Shared vocabulary in documentation issue does not prove requirement noncompliance.
+
+    Reproduces false positive where 'authentication' is shared between requirement
+    and docstring typo finding, but the finding does not demonstrate requirement noncompliance.
+    """
+    engine = ReviewEngine()
+    req = ParsedRequirement(
+        id="REQ-AUTH-01",
+        text="User authentication must reject expired tokens before issuing a session.",
+        source_file="docs/auth.md",
+    )
+    typo_with_shared_vocab = ReviewFinding(
+        id="rev-typo-vocab",
+        file_path="src/auth/service.py",
+        line=2,
+        label=ConventionalLabel.ISSUE,
+        subject="Typo in authentication docstring",
+        description="Fix spelling of parameter name in comments.",
+        severity=FindingSeverity.LOW,
+        blocking=False,
+        requirement_ids=["REQ-AUTH-01"],
+        evidence_status=EvidenceStatus.MODEL_INFERRED,
+    )
+    raw_assessments = {
+        "REQ-AUTH-01": RawRequirementAssessment(
+            requirement_id="REQ-AUTH-01",
+            status="satisfied",
+            explanation="Token expiration logic rejects expired tokens before session creation.",
+            related_locations=["src/auth/service.py:2"],
+        )
+    }
+    context = _make_dummy_context("src/auth/service.py")
+
+    assessment = engine._assess_single_requirement(
+        req=req,
+        model_assessments_map=raw_assessments,
+        deduped_findings=[typo_with_shared_vocab],
+        dismissal_notes=[],
+        context=context,
+    )
+    # The unrelated documentation finding sharing 'authentication' vocabulary
+    # must NOT force NOT_SATISFIED
+    assert assessment.status == RequirementStatus.APPEARS_SATISFIED
+    assert "Token expiration logic rejects expired tokens" in assessment.explanation

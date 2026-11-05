@@ -793,6 +793,52 @@ class ReviewEngine:
         "prohibit",
     }
 
+    GENERIC_DOMAIN_WORDS = {
+        "account",
+        "accounts",
+        "auth",
+        "authentication",
+        "authorize",
+        "authorization",
+        "check",
+        "checks",
+        "class",
+        "code",
+        "component",
+        "components",
+        "data",
+        "feature",
+        "features",
+        "file",
+        "files",
+        "function",
+        "functions",
+        "handler",
+        "handlers",
+        "helper",
+        "helpers",
+        "logic",
+        "method",
+        "methods",
+        "model",
+        "models",
+        "module",
+        "modules",
+        "record",
+        "records",
+        "req",
+        "service",
+        "services",
+        "system",
+        "systems",
+        "user",
+        "users",
+        "util",
+        "utils",
+        "value",
+        "values",
+    }
+
     @classmethod
     def _is_mandatory_requirement(cls, req: ParsedRequirement) -> bool:
         """Check if requirement expresses a mandatory constraint per RFC 2119 semantics."""
@@ -810,15 +856,30 @@ class ReviewEngine:
         if req.id not in f.requirement_ids:
             return False
 
+        f_subject_lower = f.subject.lower()
         f_text = f"{f.subject}\n{f.description}".lower()
+        req_text_lower = f"{req.id} {req.text}".lower()
 
-        # 2. Direct reference to requirement ID (e.g. "req-01", "req-auth-01")
-        if req.id.lower() in f_text:
-            return True
+        # 2. Exclude cosmetic and documentation issues from functional code requirements
+        cosmetic_pattern = (
+            r"\b(?:typo|spelling|docstring|comment|comments|"
+            r"formatting|whitespace|style|indentation|grammar)\b"
+        )
+        if re.search(cosmetic_pattern, f_subject_lower):
+            req_is_doc = bool(
+                re.search(
+                    r"\b(?:docstring|comment|comments|documentation|formatting|spelling|typo)\b",
+                    req_text_lower,
+                )
+            )
+            if not req_is_doc:
+                return False
 
-        # 3. Explicit requirement noncompliance statement (e.g. "failed requirement")
+        # 3. Explicit requirement noncompliance statements
+        # (e.g. "failed requirement", "violates REQ-01")
+        req_id_escaped = re.escape(req.id.lower())
         if re.search(
-            r"\b(?:failed|violat\w*|breach\w*|break\w*|miss\w*)\s+requirement\b",
+            rf"\b(?:failed|violat\w*|breach\w*|break\w*|miss\w*)\s+(?:requirement\b|{req_id_escaped}\b)",
             f_text,
         ):
             return True
@@ -828,30 +889,38 @@ class ReviewEngine:
         ):
             return True
 
-        # 4. Extract meaningful domain stems from requirement ID and text
-        req_words = {
+        # 4. Extract meaningful constraint terms from requirement text
+        raw_req_words = {
             w.lower()
-            for w in re.findall(r"\b[a-zA-Z_]{3,}\b", f"{req.id} {req.text}")
+            for w in re.findall(r"\b[a-zA-Z_]{3,}\b", req.text)
             if w.lower() not in cls.STOP_WORDS
         }
-        if not req_words:
+        constraint_words = {w for w in raw_req_words if w not in cls.GENERIC_DOMAIN_WORDS}
+        if not constraint_words:
+            constraint_words = raw_req_words
+        if not constraint_words:
             return True
 
-        # 5. Extract words from finding subject and description
+        # 5. Extract domain words from finding (excluding stopwords and generic component terms)
         finding_words = {
             w.lower()
             for w in re.findall(r"\b[a-zA-Z_]{3,}\b", f_text)
-            if w.lower() not in cls.STOP_WORDS
+            if w.lower() not in cls.STOP_WORDS and w.lower() not in cls.GENERIC_DOMAIN_WORDS
         }
+        if not finding_words:
+            return False
 
-        # 6. Check for direct word matches or root/stem overlaps (min 3 chars)
-        if req_words & finding_words:
+        # 6. Check for direct constraint match or meaningful root/stem overlap (min 4 chars)
+        if constraint_words & finding_words:
             return True
 
-        for rw in req_words:
+        for cw in constraint_words:
             for fw in finding_words:
-                min_len = min(len(rw), len(fw))
-                if min_len >= 3 and (rw.startswith(fw[:3]) or fw.startswith(rw[:3])):
+                if (
+                    len(cw) >= 4
+                    and len(fw) >= 4
+                    and (cw.startswith(fw[:4]) or fw.startswith(cw[:4]))
+                ):
                     return True
 
         return False
