@@ -228,6 +228,7 @@ class ReviewEngine:
             deduped_findings=deduped_findings,
             dismissal_notes=dismissal_notes,
             context=context,
+            all_findings=findings,
         )
 
         # 9. Compute Resource Usage
@@ -506,7 +507,13 @@ class ReviewEngine:
 
             for other in sorted_cluster[1:]:
                 if other.subject != primary.subject:
-                    notes.append(f"*(Related perspective [{other.label.value}]: {other.subject})*")
+                    desc_detail = (
+                        f" — {other.description}"
+                        if other.description and other.description.strip() != other.subject.strip()
+                        else ""
+                    )
+                    tag = f"*(Related perspective [{other.label.value}]: "
+                    notes.append(f"{tag}{other.subject}{desc_detail})*")
 
             if notes:
                 merged_desc = f"{merged_desc}\n\n" + "\n\n".join(notes)
@@ -776,6 +783,223 @@ class ReviewEngine:
             f"Requirement '{req_id}' not assessed: no relevant changes in diff context.",
         )
 
+    MANDATORY_TERMS = {
+        "must",
+        "shall",
+        "required",
+        "mandatory",
+        "strictly",
+        "enforce",
+        "prohibit",
+    }
+
+    GENERIC_DOMAIN_WORDS = {
+        "account",
+        "accounts",
+        "auth",
+        "authentication",
+        "authorize",
+        "authorization",
+        "check",
+        "checks",
+        "class",
+        "code",
+        "component",
+        "components",
+        "data",
+        "feature",
+        "features",
+        "file",
+        "files",
+        "function",
+        "functions",
+        "handler",
+        "handlers",
+        "helper",
+        "helpers",
+        "logic",
+        "method",
+        "methods",
+        "model",
+        "models",
+        "module",
+        "modules",
+        "record",
+        "records",
+        "req",
+        "service",
+        "services",
+        "system",
+        "systems",
+        "user",
+        "users",
+        "util",
+        "utils",
+        "value",
+        "values",
+    }
+
+    @classmethod
+    def _is_mandatory_requirement(cls, req: ParsedRequirement) -> bool:
+        """Check if requirement expresses a mandatory constraint per RFC 2119 semantics."""
+        words = set(re.findall(r"\b[a-zA-Z_]+\b", req.text.lower()))
+        return bool(words & cls.MANDATORY_TERMS)
+
+    @classmethod
+    def _has_requirement_evidence(
+        cls,
+        f: ReviewFinding,
+        req: ParsedRequirement,
+    ) -> bool:
+        """Check if finding provides concrete evidence connecting to the requirement's domain."""
+        # 1. Finding must cite the requirement ID
+        if req.id not in f.requirement_ids:
+            return False
+
+        f_subject_lower = f.subject.lower()
+        f_text = f"{f.subject}\n{f.description}".lower()
+        req_text_lower = f"{req.id} {req.text}".lower()
+
+        # 2. Exclude cosmetic and documentation issues from functional code requirements
+        cosmetic_pattern = (
+            r"\b(?:typo|spelling|docstring|comment|comments|"
+            r"formatting|whitespace|style|indentation|grammar)\b"
+        )
+        if re.search(cosmetic_pattern, f_subject_lower):
+            req_is_doc = bool(
+                re.search(
+                    r"\b(?:docstring|comment|comments|documentation|formatting|spelling|typo)\b",
+                    req_text_lower,
+                )
+            )
+            if not req_is_doc:
+                return False
+
+        # 3. Explicit requirement noncompliance statements
+        # (e.g. "failed requirement", "violates REQ-01")
+        req_id_escaped = re.escape(req.id.lower())
+        if re.search(
+            rf"\b(?:failed|violat\w*|breach\w*|break\w*|miss\w*)\s+(?:requirement\b|{req_id_escaped}\b)",
+            f_text,
+        ):
+            return True
+        if re.search(
+            r"\brequirement\s+(?:failed|violated|not\s+met|unfulfilled)\b",
+            f_text,
+        ):
+            return True
+
+        # 4. Extract meaningful constraint terms from requirement text
+        raw_req_words = {
+            w.lower()
+            for w in re.findall(r"\b[a-zA-Z_]{3,}\b", req.text)
+            if w.lower() not in cls.STOP_WORDS
+        }
+        constraint_words = {w for w in raw_req_words if w not in cls.GENERIC_DOMAIN_WORDS}
+        if not constraint_words:
+            return True
+
+        # 5. Extract domain words from finding (excluding stopwords and generic component terms)
+        finding_words = {
+            w.lower()
+            for w in re.findall(r"\b[a-zA-Z_]{3,}\b", f_text)
+            if w.lower() not in cls.STOP_WORDS and w.lower() not in cls.GENERIC_DOMAIN_WORDS
+        }
+        if not finding_words:
+            return False
+
+        # 6. Check for direct constraint match or meaningful root/stem overlap (min 4 chars)
+        if constraint_words & finding_words:
+            return True
+
+        for cw in constraint_words:
+            for fw in finding_words:
+                if (
+                    len(cw) >= 4
+                    and len(fw) >= 4
+                    and (cw.startswith(fw[:4]) or fw.startswith(cw[:4]))
+                ):
+                    return True
+
+        return False
+
+    @staticmethod
+    def _is_clarifying_finding(f: ReviewFinding) -> bool:
+        """Check if finding represents a clarification question or specification ambiguity."""
+        if f.label == ConventionalLabel.QUESTION:
+            return True
+        desc_lower = f.description.lower()
+        subj_lower = f.subject.lower()
+        ambiguity_markers = (
+            "unspecified",
+            "ambiguous",
+            "missing precedence",
+            "priority is unspecified",
+            "precedence is unspecified",
+            "unclear acceptance criteria",
+            "missing acceptance criteria",
+        )
+        return any(marker in subj_lower or marker in desc_lower for marker in ambiguity_markers)
+
+    @classmethod
+    def _is_proven_violation(
+        cls,
+        f: ReviewFinding,
+        req: ParsedRequirement | None = None,
+        raw_assessment: RawRequirementAssessment | None = None,
+    ) -> bool:
+        """Determine whether a finding constitutes an established requirement violation."""
+        # 1. Merge-blocking findings are by definition established violations
+        if f.blocking:
+            return True
+
+        # 2. Only findings labeled 'issue' can be violations
+        if f.label != ConventionalLabel.ISSUE:
+            return False
+
+        # 3. Finding must have substantive evidence connecting it to the requirement domain
+        if req is not None and not cls._has_requirement_evidence(f, req):
+            return False
+
+        # 4. High or Critical severity findings connected to the requirement demonstrate
+        # concrete noncompliance, regardless of requirement wording (must vs should)
+        # or provider claim
+        if f.severity in (FindingSeverity.HIGH, FindingSeverity.CRITICAL):
+            return True
+
+        # 5. If provider assessment confirms non-satisfaction, issue is corroborated
+        if raw_assessment is not None:
+            raw_status = raw_assessment.status.lower().strip().replace("-", "_")
+            if raw_status in ("not_satisfied", "violated"):
+                return True
+            # If provider claims satisfied on a non-mandatory recommendation with ambiguity,
+            # a non-blocking low/medium issue does not prove violation over specification ambiguity
+            if (
+                raw_status in ("satisfied", "appears_satisfied")
+                and req is not None
+                and not cls._is_mandatory_requirement(req)
+            ):
+                return False
+
+        # 6. Default for unassessed/model-free issues or mandatory requirements
+        return True
+
+    @staticmethod
+    def _extract_clarification_text(f: ReviewFinding) -> str:
+        """Extract clarification question or ambiguity summary from finding."""
+        if f.label == ConventionalLabel.QUESTION:
+            return f.subject
+
+        m = re.search(
+            r"\*\(Related perspective \[question\]:\s*([^\*\n—\)]+)",
+            f.description,
+            re.IGNORECASE,
+        )
+        if m:
+            return m.group(1).strip()
+
+        return f.subject
+
     def _assess_single_requirement(
         self,
         req: ParsedRequirement,
@@ -783,44 +1007,94 @@ class ReviewEngine:
         deduped_findings: list[ReviewFinding],
         dismissal_notes: list[str],
         context: GitReviewContext,
+        all_findings: list[ReviewFinding] | None = None,
     ) -> RequirementAssessment:
         req_id_clean = req.id.upper()
-        all_related_findings = [f for f in deduped_findings if req.id in f.requirement_ids]
-        violating_findings = [
-            f for f in all_related_findings if f.label == ConventionalLabel.ISSUE or f.blocking
-        ]
-        clarifying_findings = [f for f in all_related_findings if f not in violating_findings]
+        raw_assessment = model_assessments_map.get(req_id_clean)
+
+        # Use un-deduplicated findings when available to prevent presentation clustering
+        # from suppressing or altering constituent perspectives
+        source_findings = all_findings if all_findings is not None else deduped_findings
+        all_related_findings = [f for f in source_findings if req.id in f.requirement_ids]
         is_relevant = self._is_requirement_relevant_to_context(req, context)
 
-        # 1. Unresolved violating issues (blocking or label=issue)
-        if violating_findings:
+        # 1. Distinguish established violations from questions / ambiguities
+        proven_violations = [
+            f for f in all_related_findings if self._is_proven_violation(f, req, raw_assessment)
+        ]
+        clarifying_findings = [f for f in all_related_findings if self._is_clarifying_finding(f)]
+
+        # Also inspect deduped_findings for any merged question perspectives
+        # when all_findings was not supplied
+        if all_findings is None:
+            for f in deduped_findings:
+                if (
+                    req.id in f.requirement_ids
+                    and f not in clarifying_findings
+                    and "related perspective [question]" in f.description.lower()
+                ):
+                    clarifying_findings.append(f)
+
+        # 1. Established, sufficiently evidenced requirement violations
+        if proven_violations:
             status = RequirementStatus.NOT_SATISFIED
-            finding_ids = ", ".join(f.id for f in violating_findings)
+            finding_ids = ", ".join(f.id for f in proven_violations)
             explanation = (
                 f"Requirement not satisfied: unresolved issue(s) identified ({finding_ids})."
             )
-        # 2. Positive evidence via verified compensating controls
+        # 2. Positive evidence via verified compensating controls in context
         elif any(req.id in note for note in dismissal_notes):
             status = RequirementStatus.APPEARS_SATISFIED
             explanation = (
                 "[Grounding: Statically detected compensating control in context] "
                 "Requirement verified satisfied via compensating controls in context."
             )
-        # 3. Provider-supplied assessment validated against context
-        elif req_id_clean in model_assessments_map:
+        # 3. Ambiguous specifications or unresolved clarification questions
+        elif clarifying_findings or (
+            raw_assessment is not None
+            and raw_assessment.status.lower().strip().replace("-", "_")
+            in ("unclear", "partially_satisfied")
+        ):
+            status = RequirementStatus.UNCLEAR
+            q_summaries = [self._extract_clarification_text(f) for f in clarifying_findings]
+            if not q_summaries and raw_assessment and raw_assessment.explanation:
+                q_summaries = [raw_assessment.explanation]
+            unique_summaries = list(dict.fromkeys(q_summaries))
+            q_text = (
+                "; ".join(unique_summaries)
+                if unique_summaries
+                else f"unresolved questions ({', '.join(f.id for f in clarifying_findings)})"
+            )
+            is_spec_ambiguity = any(
+                any(
+                    k in s.lower()
+                    for k in (
+                        "precedence",
+                        "priority",
+                        "acceptance criteria",
+                        "unspecified",
+                        "ambiguous",
+                    )
+                )
+                for s in unique_summaries
+            )
+            if is_spec_ambiguity:
+                explanation = (
+                    f"Requirement '{req.id}' is unclear: specification does not establish "
+                    f"clear precedence or acceptance criteria ({q_text})."
+                )
+            else:
+                explanation = (
+                    f"Requirement '{req.id}' has unresolved questions or suggestions ({q_text})."
+                )
+        # 4. Provider-supplied assessment validated against context
+        elif raw_assessment is not None:
             status, explanation = self._assess_from_provider(
-                model_assessments_map[req_id_clean],
+                raw_assessment,
                 req.id,
                 is_relevant,
                 context,
-                has_violating_findings=bool(violating_findings),
-            )
-        # 4. Clarification questions or suggestions without explicit provider assessment
-        elif clarifying_findings:
-            status = RequirementStatus.UNCLEAR
-            q_ids = ", ".join(f.id for f in clarifying_findings)
-            explanation = (
-                f"Requirement '{req.id}' has unresolved questions or suggestions ({q_ids})."
+                has_violating_findings=bool(proven_violations),
             )
         # 5. Fallback: never silently consider unexamined requirement satisfied
         else:
@@ -832,7 +1106,7 @@ class ReviewEngine:
             text=req.text,
             status=status,
             explanation=explanation,
-            related_finding_ids=[f.id for f in all_related_findings],
+            related_finding_ids=[f.id for f in deduped_findings if req.id in f.requirement_ids],
         )
 
     def _build_requirement_assessments(
@@ -842,6 +1116,7 @@ class ReviewEngine:
         deduped_findings: list[ReviewFinding],
         dismissal_notes: list[str],
         context: GitReviewContext,
+        all_findings: list[ReviewFinding] | None = None,
     ) -> list[RequirementAssessment]:
         if not parsed_reqs:
             return [
@@ -868,6 +1143,7 @@ class ReviewEngine:
                 deduped_findings=deduped_findings,
                 dismissal_notes=dismissal_notes,
                 context=context,
+                all_findings=all_findings,
             )
             for req in parsed_reqs
         ]
