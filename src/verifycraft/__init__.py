@@ -38,7 +38,7 @@ from verifycraft.core.runner import (
 from verifycraft.engine import VerificationEngine
 from verifycraft.review.engine import ReviewEngine
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __all__ = [
     "CheckRunner",
