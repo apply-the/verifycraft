@@ -1,9 +1,9 @@
 # VerifyCraft: Roadmap
 
 > **Repository:** [`apply-the/verifycraft`](https://github.com/apply-the/verifycraft)  
-> **Status:** Proposed review-first roadmap following the published `v0.1.0`  
+> **Status:** Review-first roadmap; `v0.1.0` and `v0.2.0` are published, `v0.3.0` is next  
 > **Strategy:** Deliver a useful requirements-aware code review before investing in broad integrations.  
-> **Release policy:** Milestones are outcome gates, not committed dates; versions after `v0.1.0` are **proposed targets**.
+> **Release policy:** Milestones are outcome gates, not committed dates; versions after `v0.2.0` are **proposed targets**.
 
 ## 1. North star: actionable, requirements-aware code review
 
@@ -29,44 +29,62 @@ Implemented: Python package, `VerificationEngine.verify`, `verifycraft verify`, 
 
 **Product correction:** `v0.1.0` should not be retroactively called a complete code-review milestone. Keep the release unchanged; fix forward through documentation and new functionality.
 
+### What `v0.2.0` shipped
+
+**Released:** [`v0.2.0`](https://github.com/apply-the/verifycraft/releases/tag/v0.2.0) ([release notes](releases/v0.2.0-release-notes.md)).
+
+Implemented: `verifycraft review` and `ReviewEngine`; resolved base/head Git context with preserved source coordinates and bounded prompt budgets; requirement parsing and per-requirement assessment (`appears_satisfied`, `partially_satisfied`, `not_satisfied`, `unclear`, `not_assessed`); Conventional Comments, Markdown and versioned JSON `ReviewReport`; universal provider adapters (DeepSeek, OpenAI, Anthropic, Bedrock, Gemini, OpenAI-compatible and local servers) plus model-free candidate ingestion; a 16-case versioned review benchmark with maximum-cardinality matching, adjudications, and fail-closed offline rescoring.
+
+**Release evidence:** offline rescoring of the recorded DeepSeek `deepseek-chat` live run (all 16 cases): VerifyCraft 90.9% actionable precision, 100% recall of 10 expected defects, 0 invalid locations; gate `PENDING_MAINTAINER_APPROVAL`, approved by the maintainer. Cases are curated synthetic fixtures, not production PRs.
+
+**Accepted limitations:** requirement-evidence linking (`_has_requirement_evidence()`) is lexical/heuristic, not a semantic proof of non-compliance; the Variant B replay of `REQ-PERF-01` returns `appears_satisfied` versus ground truth `unclear`. Both carry into `v0.3.0`.
+
 ## 3. Revised delivery sequence
 
 | Milestone | Outcome | Status | Exit gate |
 | --- | --- | --- | --- |
 | **`v0.1.0`: Verification primitive** | Caller-supplied hypothesis + pytest check -> typed evidence/verdict, CLI and SDK | **Released** | Published artifact and deterministic contract tests. Does not establish review value. |
-| **`v0.2.0`: Review-first vertical slice** | Diff + context + optional requirements -> useful findings, Conventional Comments, JSON through CLI and SDK | **Next, proposed** | End-to-end review works on known real changes, with correctly located comments and honest evidence/uncertainty. |
-| **`v0.3.0`: Evidence-aware review** | Link review findings to safe targeted verification and reliable check selection | **Proposed** | Clear, reproducible association between reviewed claims and trusted source/static/test evidence. |
+| **`v0.2.0`: Review-first vertical slice** | Diff + context + optional requirements -> useful findings, Conventional Comments, JSON through CLI and SDK | **Released** | Met on the 16-case benchmark (90.9% precision, 100% recall, 0 invalid locations) with maintainer approval; two limitations accepted explicitly. |
+| **`v0.3.0`: Evidence-aware review** | Structured finding-to-requirement evidence, safe targeted verification and reliable check selection | **Next, proposed** | Clear, reproducible association between reviewed claims and trusted source/static/test evidence. |
 | **`v0.4.0`: Coding-agent distribution** | Claude Code/Copilot-friendly tool surface, optionally MCP | **Proposed** | Existing agent can review and verify without a second mandatory LLM, through the same SDK contracts. |
 | **`v0.5.0`: PR automation and ecosystem** | GitHub Action, optional LangGraph adapter, stronger empirical benchmark | **Proposed** | Safe, actionable PR review with stable contracts and measured usefulness. |
 
 Do not advance a milestone merely because code exists. Failure to achieve useful results is a reason to narrow scope, revise the design, or stop.
 
-## 4. `v0.2.0`: Build the first actual review product
+## 4. `v0.2.0`: Build the first actual review product (released)
+
+> This section is kept as the original milestone specification. The scope below was delivered in `v0.2.0`; see section 9 for the completed backlog.
 
 ### User story
 
 A developer requests a review of `main...feature/auth`, supplies an auth specification (optionally), and gets a concise review containing code-specific issues, requirements coverage, questions, and actionable Conventional Comments. A second user can call the same capability programmatically, supplying either a model provider or candidates from a coding agent.
 
-Proposed CLI, **not implemented in `v0.1.0`**:
+CLI, **available since `v0.2.0`**:
 
 ```bash
 verifycraft review . \
   --base main \
   --head feature/auth \
   --requirements docs/auth-requirements.md \
+  --provider deepseek \
   --format markdown
 ```
 
-Proposed SDK shape, **not implemented in `v0.1.0`**:
+SDK, **available since `v0.2.0`**:
 
 ```python
-review = ReviewEngine(provider=my_provider).review(
-    repository=".",
-    base_ref="main",
-    head_ref="feature/auth",
-    requirements=["docs/auth-requirements.md"],
+from verifycraft import ReviewEngine, ReviewRequest
+
+report = ReviewEngine().review(
+    ReviewRequest(
+        repo_path=".",
+        base_revision="main",
+        head_revision="feature/auth",
+        requirements=["docs/auth-requirements.md"],
+        provider="deepseek",
+    )
 )
-print(review.to_conventional_comments())
+print(report.to_conventional_comments())
 ```
 
 ### Workstream A: Change understanding and bounded context
@@ -124,12 +142,14 @@ print(review.to_conventional_comments())
 
 Move beyond source-only findings without turning the project into a test runner:
 
+- **Structured requirement evidence (carried over from `v0.2.0`).** Replace the lexical/heuristic `_has_requirement_evidence()` linkage with explicit evidence records binding a finding to the code entities, data flows or checks that demonstrate non-compliance. Do not extend the current approach with more textual exceptions.
+- **Ambiguity detection under provider over-confidence (carried over from `v0.2.0`).** Address cases such as `REQ-PERF-01`, where a provider reports `satisfied` for an under-specified requirement, without changing the recorded ground truth.
 - Map individual review findings to explicit testable observations, static checks, or other approved evidence paths, with `not_verified` when no safe check exists.
 - Support check selection, rather than forcing callers to know the exact pytest file and expected output. Never execute an arbitrary model-generated shell string.
 - Resolve project execution environments explicitly (including project virtual environments). Address the isolated-interpreter mismatch from global `uv tool install` when selecting a trusted test backend.
 - Provide a secure isolation implementation **before** running untrusted PR code, or return `blocked` clearly when unavailable. Trusted local mode is not isolation.
 - Optionally compare behavior at base/head for the same check when environments and test identity are genuinely comparable; distinguish observed behavioral regression from inferred root cause.
-- Reuse `v0.1.0` `VerificationEngine` where it genuinely fits, extending types compatibly and attaching evidence IDs to review findings.
+- Reuse the `VerificationEngine` (since `v0.1.0`) where it genuinely fits, extending types compatibly and attaching evidence IDs to review findings.
 
 **Exit gate:** On a held-out benchmark, executable evidence changes the status of correct and incorrect review hypotheses as expected, without fabricated confirmation or unsafe execution. Publish incremental quality/cost effects versus review alone.
 
@@ -164,22 +184,22 @@ Expose the same review and verification capabilities through a **thin agent-inte
 | Honest evidence/uncertainty | Sophisticated verification orchestration | Relabeling pytest output as bug discovery |
 | Reproducible quality evaluation | More test backends | Claiming a keyword heuristic is an LLM benchmark |
 
-## 9. Initial implementation backlog for `v0.2.0`
+## 9. Implementation backlog for `v0.2.0` (completed)
 
-Work in a single release-preparation branch; each item should finish with a runnable acceptance test. Do not create empty future modules.
+All items below shipped in `v0.2.0`. Remaining gaps are tracked as `v0.3.0` work (section 5).
 
-- [ ] Update `docs/FOUNDATIONS.md` and this roadmap; align README with what `v0.1.0` does versus proposed behavior.
-- [ ] Define `ReviewRequest`, `ReviewFinding`, `RequirementAssessment` and `ReviewReport` with explicit review/evidence status separation and JSON serialization.
-- [ ] Implement resolved Git revision/diff ingestion with bounded context and validated line/rename mapping.
-- [ ] Implement requirement-source parsing and per-requirement traceability/coverage reporting.
-- [ ] Implement one genuinely useful semantic reviewer with an explicitly configured provider; add a deterministic test adapter.
-- [ ] Support externally supplied candidate findings from an existing agent without a mandatory additional model call.
-- [ ] Implement claim validation, context/counterexample checks, deduplication and severity/priority policy.
-- [ ] Render correct Conventional Comments, Markdown and JSON with file/line/source references.
-- [ ] Expose review from the Python SDK and CLI with equivalent behavior and proper error handling.
-- [ ] Add a complete examples repository/fixture and golden acceptance tests, including at least one requirement violation and one clean case.
-- [ ] Benchmark against a real LLM/agent baseline with comparable inputs; publish limitations and actual metrics.
-- [ ] Preserve existing `v0.1.0` verification behavior; run full CI, packaging, security and documentation checks.
+- [x] Update `docs/FOUNDATIONS.md` and this roadmap; align README with what is released versus proposed.
+- [x] Define `ReviewRequest`, `ReviewFinding`, `RequirementAssessment` and `ReviewReport` with explicit review/evidence status separation and JSON serialization.
+- [x] Implement resolved Git revision/diff ingestion with bounded context and validated line/rename mapping.
+- [x] Implement requirement-source parsing and per-requirement traceability/coverage reporting.
+- [x] Implement one genuinely useful semantic reviewer with an explicitly configured provider; add a deterministic test adapter.
+- [x] Support externally supplied candidate findings from an existing agent without a mandatory additional model call.
+- [x] Implement claim validation, context/counterexample checks, deduplication and severity/priority policy.
+- [x] Render correct Conventional Comments, Markdown and JSON with file/line/source references.
+- [x] Expose review from the Python SDK and CLI with equivalent behavior and proper error handling.
+- [x] Add a complete examples repository/fixture and golden acceptance tests, including at least one requirement violation and one clean case.
+- [x] Benchmark against a real LLM/agent baseline with comparable inputs; publish limitations and actual metrics.
+- [x] Preserve existing `v0.1.0` verification behavior; run full CI, packaging, security and documentation checks.
 
 ## 10. Concrete end-to-end acceptance scenarios
 
@@ -214,6 +234,6 @@ Treat quality as a multi-objective evaluation, not a single accuracy score. Publ
 
 ## 12. Documentation consistency and history
 
-Keep historical release notes for `v0.1.0` intact, but avoid broad claims that the current product discovers code-review findings. Make the README explicit about what is available now and what is proposed. Replace stale statements such as "working name" or "not implemented" in the foundation and treat the old Stage 0–5 ordering as historical planning, not a binding dependency chain for a review-first product.
+Keep historical release notes for `v0.1.0` and `v0.2.0` intact. Keep the README explicit about what is released and what is proposed, and state accepted limitations alongside benchmark results. Treat the old Stage 0–5 ordering as historical planning, not a binding dependency chain for a review-first product.
 
-**Related documents:** [FOUNDATIONS.md](FOUNDATIONS.md), [Release guide](RELEASING.md), [v0.1.0 release](https://github.com/apply-the/verifycraft/releases/tag/v0.1.0), [Conventional Comments](https://conventionalcomments.org/).
+**Related documents:** [FOUNDATIONS.md](FOUNDATIONS.md), [Release guide](RELEASING.md), [Provider matrix](providers.md), [v0.2.0 evaluation](evaluation/v0.2.0-review-quality.md), [v0.2.0 release](https://github.com/apply-the/verifycraft/releases/tag/v0.2.0), [v0.1.0 release](https://github.com/apply-the/verifycraft/releases/tag/v0.1.0), [Conventional Comments](https://conventionalcomments.org/).

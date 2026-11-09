@@ -1,8 +1,8 @@
 # VerifyCraft: Foundations
 
 > **Repository:** [`apply-the/verifycraft`](https://github.com/apply-the/verifycraft)  
-> **Status:** Product direction and architectural principles, revised after `v0.1.0`  
-> **Published baseline:** `v0.1.0` is a deterministic verification primitive, **not** an autonomous code-review product.  
+> **Status:** Product direction and architectural principles, updated for `v0.2.0`  
+> **Evolutionary baseline:** `v0.1.0` introduced the deterministic verification primitive; `v0.2.0` delivered the autonomous semantic code-review engine.  
 > **Product statement:** **Evidence-aware code review that evaluates implementations against their changes, context, and explicit requirements, then produces actionable Conventional Comments.**
 
 ## 1. Mission
@@ -19,13 +19,22 @@ VerifyCraft is Python-first, model-agnostic and framework-agnostic. It provides 
 
 VerifyCraft does not depend on Boundline or Canon. Their design ideas can inform the project, but they are not runtime dependencies or mandatory interoperability contracts.
 
-## 2. Reality check: `v0.1.0` versus the product goal
+## 2. Reality check: `v0.1.0` verification primitive versus `v0.2.0` review engine
 
-The published `v0.1.0` provides an SDK/CLI verification primitive: it accepts a **caller-supplied hypothesis**, a **caller-supplied pytest check**, and an execution policy; it runs approved checks in trusted local mode and returns typed evidence and one of `supported`, `refuted`, `inconclusive`, or `blocked`. It includes bounded fingerprinting, provenance protections, tests, and packaging.
+The initial `v0.1.0` release provided an SDK/CLI verification primitive: it accepted a **caller-supplied hypothesis**, a **caller-supplied pytest check**, and an execution policy; it ran approved checks in trusted local mode and returned typed evidence and one of `supported`, `refuted`, `inconclusive`, or `blocked`. It included bounded fingerprinting, provenance protections, tests, and packaging.
 
-It **does not** independently compare Git branches, discover likely defects, understand requirements, generate checks, render Conventional Comments, perform a complete review, or integrate natively with Copilot/Claude Code. It also does not provide a safe sandbox for executing untrusted PR code. The existing five-fixture benchmark tests contract invariants; its baseline is a **keyword heuristic, not a real LLM reviewer**.
+However, `v0.1.0` **did not** independently compare Git branches, discover likely defects, understand requirements, generate checks, render Conventional Comments, perform a complete review, or integrate natively with coding agents.
 
-**Design constraint:** Preserve and reuse the useful `v0.1.0` primitive without mistaking its current functionality for the product promise. Future-facing interfaces in this document are **proposals, not existing APIs**.
+The `v0.2.0` release bridged this gap by implementing the autonomous review engine:
+- Git diff acquisition, bounded hunk windowing (±25 lines), and related helper context selection.
+- Universal model providers (DeepSeek, OpenAI, Anthropic, Bedrock, Gemini, Ollama, LM Studio, etc.) plus model-free candidate ingestion.
+- RFC 2119 requirement parsing, grounding, and coverage assessment.
+- Spec-conforming Conventional Comments rendering with validated file/line anchors.
+- Strict operational separation between review opinions and dynamic execution verdicts.
+
+**Ongoing design constraints:**
+- Preserve and reuse the underlying `v0.1.0` verification primitive without mistaking unverified model inferences for runtime proof.
+- Keep untrusted PR execution bounded: `trusted_local` mode executes local pytest with time and output limits, but full containerized isolation remains scheduled for `v0.3.0`.
 
 ## 3. Product surfaces: one engine, multiple entry points
 
@@ -85,7 +94,7 @@ A requirements coverage report should classify each explicit requirement as, for
 
 ## 5. Review workflow and ownership
 
-The following describes the desired behavior; `v0.1.0` only supplies parts of the verification layer.
+VerifyCraft implements the review workflow across the review and verification layers:
 
 1. **Acquire the change.** Resolve real Git base/head commit IDs or an explicitly supplied diff. Record scope and omissions. Never treat caller-provided revision labels as cryptographic Git proof.
 2. **Collect bounded context.** Read changed files plus relevant surrounding code, tests, interfaces, usage sites, and supplied requirements. Preserve line locations and source provenance. Respect path filters, size limits, and confidential-data policy.
@@ -152,33 +161,42 @@ Evidence: partial source inspection; not verified.
 
 **Two complementary outputs:** (1) human-readable Conventional Comments and a concise review summary; (2) versioned JSON contracts for programmatic consumers. Maintain parity across CLI, SDK and integrations. Do not use comment wording as the canonical machine schema.
 
-## 8. Proposed public contracts (not yet implemented)
+## 8. Implemented public review and verification contracts
 
-| Concept | Minimum contents |
-| --- | --- |
-| `ReviewRequest` | Repo/commit pair or diff, supplied requirements, file scope, requested dimensions, analysis provider or external candidates, review policy. |
-| `ReviewContext` | Resolved commit IDs, changed-file map, selected code context, requirement sources, context omissions and budgets. |
-| `RequirementAssessment` | Source requirement ID and citation, assessment, code references, justification, uncertainty. |
-| `ReviewFinding` | Finding ID, label, priority/severity, proposed merge-blocking status, subject, explanation, location (path and line/range), requirement links, evidence references, review status (`candidate`, `reported`, `dismissed`, `needs_clarification`), verification status (`not_verified` or linked verification verdict/evidence IDs), suggested action. Distinct from v0.1.0 verification `Finding`. |
-| `ReviewReport` | Version, revision pair, findings, requirement coverage, warnings/omissions, resource usage, model identity if used, evidence references, renderable Conventional Comments. |
-| `VerificationInput/Result` | Preserve existing `v0` hypothesis/check/evidence/verdict semantics behind the review engine. Extend compatibly when possible. |
+VerifyCraft provides typed, versioned public contracts in `verifycraft.contracts.review` and `verifycraft.contracts`:
 
-Suggested conceptual interfaces (NOT commands/APIs available in `v0.1.0`):
+| Concept | Python Type / Module | Contents & Purpose |
+| --- | --- | --- |
+| `ReviewRequest` | `verifycraft.contracts.review.ReviewRequest` | Repo/commit pair or diff, supplied requirements, file scope, requested dimensions, analysis provider or external candidates, review policy. |
+| `ReviewContext` | `verifycraft.contracts.review.ReviewContext` | Resolved commit IDs, changed-file map, selected code context, requirement sources, context omissions and budgets. |
+| `RequirementAssessment` | `verifycraft.contracts.review.RequirementAssessment` | Source requirement ID and citation, assessment status (`appears_satisfied`, `partially_satisfied`, `not_satisfied`, `unclear`, `not_assessed`), code references, justification, uncertainty. |
+| `ReviewFinding` | `verifycraft.contracts.review.ReviewFinding` | Finding ID, label, priority/severity, proposed merge-blocking status, subject, explanation, location (path and line/range), requirement links, evidence references, review status (`candidate`, `reported`, `dismissed`, `needs_clarification`), verification status (`not_verified` or linked verification verdict/evidence IDs), suggested action. Distinct from v0.1.0 verification `Finding`. |
+| `ReviewReport` | `verifycraft.contracts.review.ReviewReport` | Version, revision pair, findings, requirement coverage, warnings/omissions, resource usage, model identity if used, evidence references, renderable Conventional Comments. |
+| `VerificationInput/Result` | `verifycraft.contracts` | Preserves existing `v0.1.0` hypothesis/check/evidence/verdict semantics behind the review engine. |
+
+Public interfaces available in `v0.2.0`:
 
 ```bash
 verifycraft review . --base main --head feature/auth \
-  --requirements docs/auth-requirements.md --format markdown
+  --requirements docs/auth-requirements.md --format comments
 ```
 
 ```python
-# Proposed API, not available in VerifyCraft v0.1.0.
-review = ReviewEngine(provider=my_provider).review(
-    repository=".",
-    base_ref="main",
-    head_ref="feature/auth",
+# Public Review API in VerifyCraft v0.2.0
+from verifycraft.contracts.review import ReviewPolicy, ReviewRequest
+from verifycraft.review.engine import ReviewEngine
+
+engine = ReviewEngine()
+req = ReviewRequest(
+    repo_path=".",
+    base_revision="main",
+    head_revision="feature/auth",
     requirements=["docs/auth-requirements.md"],
+    provider="deepseek",
+    policy=ReviewPolicy(timeout_seconds=60.0),
 )
-print(review.to_conventional_comments())
+report = engine.review(req)
+print(report.to_conventional_comments())
 ```
 
 A model-free programmatic verification entry point remains first-class. Programmatic review uses a caller-configured model provider **or** externally supplied candidates; it never needs a mandatory framework or hosted VerifyCraft service.

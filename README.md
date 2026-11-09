@@ -19,29 +19,40 @@ The existing verification engine remains an independent, first-class capability 
 
 ---
 
-## What VerifyCraft Does Today (`v0.1.0`)
+## What VerifyCraft Does Today (`v0.2.0`)
 
-In version `0.1.0`, VerifyCraft delivers the foundational, independent **deterministic verification engine primitive**:
+The current release, [`v0.2.0`](https://github.com/apply-the/verifycraft/releases/tag/v0.2.0), provides two independent capabilities that share typed contracts and are available through both the CLI and the Python SDK.
+
+### Requirements-aware semantic code review (new in `v0.2.0`)
+
+- **Diff-Aware Review**: Resolves real base/head Git revisions, collects changed files plus bounded surrounding context, and preserves original source line coordinates end to end.
+- **Requirements Assessment**: Parses explicit requirement documents and classifies each requirement as `appears_satisfied`, `partially_satisfied`, `not_satisfied`, `unclear`, or `not_assessed`, distinguishing established violations from specification ambiguity and recognising compensating controls in related files.
+- **Conventional Comments + JSON**: Renders [Conventional Comments](https://conventionalcomments.org/), Markdown, and a versioned JSON `ReviewReport`. Comment anchors are validated against the diff; ungrounded locations fall back to file-level comments instead of invented line numbers.
+- **Model-Agnostic Providers**: DeepSeek, OpenAI, Anthropic, AWS Bedrock, Gemini, many OpenAI-compatible hosts, and local servers (Ollama, LM Studio, vLLM, llama.cpp). See [docs/providers.md](docs/providers.md).
+- **Model-Free Candidate Ingestion**: Host coding agents can supply candidate findings directly; VerifyCraft validates, deduplicates, and renders them without calling a second model.
+- **Auditable Review Benchmark**: Versioned evaluation dataset, maximum-cardinality bipartite matching of findings to expected defects, ground-truth adjudications, and offline rescoring of recorded live runs.
+
+### Deterministic hypothesis verification (since `v0.1.0`)
 
 - **Deterministic Hypothesis Verification**: Evaluates structured regression claims against approved test targets (e.g. `pytest`).
 - **Fail-Closed Verification Scope**: Resolves code context and fingerprints up to 500 relevant repository files with SHA-256 state tracking, failing closed if limits are exceeded.
-- **Root-Level Module Tracking**: Tracks root-level Python modules and configurations (`*.py`, `pyproject.toml`, `setup.cfg`) alongside `src/` and `tests/` directories.
 - **Categorized Verdicts**: Returns explicit outcome semantics: `supported`, `refuted`, `inconclusive`, or `blocked`.
 - **Hardened Provenance Protection**: Disables caller-provided cached execution evidence as authoritative unless verified by an independent provenance authenticator.
 - **Strict Execution Policies**: Rejects untrusted code under local execution and enforces timeouts, command restrictions, and advisory limits.
-- **Parity Between CLI and SDK**: Shares identical schemas, policies, and engine logic between terminal invocations (`verifycraft verify`) and Python imports (`VerificationEngine`).
+- **Parity Between CLI and SDK**: Shares identical schemas, policies, and engine logic between `verifycraft verify` and `VerificationEngine`.
 
-> [!NOTE]
-> Version `0.1.0` implements the verification engine primitive. It **does not** yet include autonomous git diff review, requirements document parsing, Conventional Comments generation, or LLM integrations. Those capabilities are the primary focus of the `v0.2.0` milestone.
+> [!IMPORTANT]
+> Requirement assessments are **review judgements, not proofs**. See [Known Limitations (`v0.2.0`)](#known-limitations-v020) before relying on them without human review.
 
 ---
 
-## Planned Roadmap
+## Roadmap
 
 VerifyCraft is evolving through focused, outcome-driven milestones (see [ROADMAP.md](docs/ROADMAP.md)):
 
-- 🎯 **`v0.2.0`: Review-First Vertical Slice (Next Milestone)**: End-to-end review of diffs and context against optional requirements, producing actionable Conventional Comments and JSON through CLI and Python SDK; supports both configured model providers and host-agent candidate finding ingestion without a mandatory second model.
-- ⏳ **`v0.3.0`: Evidence-Aware Review**: Link review findings to safe targeted verification, check selection, and containerized sandbox isolation.
+- ✅ **`v0.1.0`: Verification Primitive (Released)**: Caller-supplied hypothesis + approved pytest check → typed evidence and verdict.
+- ✅ **`v0.2.0`: Review-First Vertical Slice (Released)**: End-to-end review of diffs and context against optional requirements, producing Conventional Comments and JSON through CLI and SDK, with configured model providers or host-agent candidate ingestion.
+- 🎯 **`v0.3.0`: Evidence-Aware Review (Next)**: Structured evidence linking findings to requirements (replacing lexical heuristics), safe targeted verification, check selection, and containerized sandbox isolation.
 - ⏳ **`v0.4.0`: Coding-Agent Distribution**: Claude Code/Copilot-friendly tool surface and candidate ingestion without requiring a second mandatory LLM.
 - ⏳ **`v0.5.0`: PR Automation & Ecosystem**: GitHub Action review bot, optional LangGraph adapter, and multi-language check backends.
 
@@ -61,15 +72,22 @@ VerifyCraft is evolving through focused, outcome-driven milestones (see [ROADMAP
 Install VerifyCraft from [PyPI](https://pypi.org/project/verifycraft/) as a standalone command-line tool. No Python project or `pyproject.toml` is required:
 
 ```bash
-uv tool install verifycraft==0.1.0
+# Core package: verification, model-free candidate review, deterministic provider
+uv tool install verifycraft==0.2.0
+
+# With all cloud provider SDKs (OpenAI-compatible, Anthropic, Bedrock, Gemini)
+uv tool install "verifycraft[all-providers]==0.2.0"
+
 verifycraft --version
 ```
 
 Alternatively, run the CLI without installing it permanently:
 
 ```bash
-uvx verifycraft@0.1.0 --help
+uvx verifycraft@0.2.0 --help
 ```
+
+Provider SDKs are optional extras: `openai` (DeepSeek, OpenAI, and every OpenAI-compatible or local server), `anthropic`, `bedrock`, `gemini`, or `all-providers`.
 
 If the installed command is not found, run `uv tool update-shell` and restart your terminal.
 
@@ -78,13 +96,15 @@ If the installed command is not found, run `uv tool update-shell` and restart yo
 To import VerifyCraft in an existing Python project, run the following from the project directory, where `pyproject.toml` is located:
 
 ```bash
-uv add verifycraft==0.1.0
+uv add verifycraft==0.2.0
+# or, with provider SDKs
+uv add "verifycraft[all-providers]==0.2.0"
 ```
 
 Or install it in an activated Python virtual environment using `pip`:
 
 ```bash
-python -m pip install verifycraft==0.1.0
+python -m pip install "verifycraft[all-providers]==0.2.0"
 ```
 
 `uv add` manages project dependencies and requires a `pyproject.toml`; it is not the command for installing a standalone CLI from your home directory.
@@ -107,10 +127,7 @@ pip install -e ".[dev]"
 
 ## Semantic Code Review (CLI & SDK)
 
-> [!NOTE]
-> The Semantic Code Review engine (`verifycraft review`, `ReviewEngine`, and provider adapters) is the core feature set of the upcoming **v0.2.0** milestone currently implemented on `main` and undergoing empirical validation. The published release on PyPI remains `v0.1.0` (verification engine primitive).
-
-VerifyCraft v0.2.0 introduces the **first working, requirements-aware semantic code review engine**:
+VerifyCraft v0.2.0 introduces the **first working, requirements-aware semantic code review engine**, available on PyPI:
 It maps Git diffs to relevant surrounding context, evaluates against optional requirements, runs semantic analysis via model providers (e.g. Gemini) or deterministic adapters, checks for compensating controls in surrounding files, and generates actionable [Conventional Comments](https://conventionalcomments.org/) and structured JSON.
 
 ### Review CLI & Universal Providers
@@ -238,7 +255,7 @@ VerifyCraft strictly follows the [Conventional Comments](https://conventionalcom
 
 ---
 
-## Hypothesis Verification Engine (v0.1.0 SDK)
+## Hypothesis Verification Engine (SDK)
 
 VerifyCraft also provides a typed verification engine that evaluates explicit regression hypotheses against approved checks:
 
@@ -301,7 +318,7 @@ print("JSON Output:\n", result.to_json(indent=2))
 
 ---
 
-## Hypothesis Verification CLI (v0.1.0 CLI)
+## Hypothesis Verification CLI
 
 The `verifycraft verify` CLI mirrors the verification SDK, sharing the exact same engine and typed schemas:
 
@@ -379,22 +396,48 @@ VerifyCraft includes reproducible benchmark suites for both the verification eng
 uv run python -m benchmarks.evaluate
 uv run python -m benchmarks.evaluate --json
 
-# 2. Run Review Quality Evaluation benchmark (3-variant evaluation across 16 cases):
+# 2. Review Quality Evaluation benchmark (16 cases, variants A/B/C + replay):
 # Simulated mode (deterministic contract fixture validation, no API key required):
 uv run python -m benchmarks.evaluate_review --mode simulated
 
-# Live mode (calls Gemini API; requires GEMINI_API_KEY):
-export GEMINI_API_KEY="your-gemini-api-key"
-uv run python -m benchmarks.evaluate_review --mode live
+# Offline rescoring of the recorded DeepSeek live run (no API calls, no tokens):
+uv run python -m benchmarks.evaluate_review \
+  --rescore benchmarks/data/review_eval/reports/live_deepseek_evaluation_raw.json
+
+# Live mode (paid provider calls; requires the provider API key):
+export DEEPSEEK_API_KEY="your-deepseek-api-key"
+uv run python -m benchmarks.evaluate_review --mode live --provider deepseek --model deepseek-chat --split all --json
 ```
+
+### `v0.2.0` release evidence
+
+The `v0.2.0` release gate was closed by maintainer approval on the offline rescoring of the recorded DeepSeek (`deepseek-chat`) live run over all 16 cases (`dev` + `held_out`). Rescoring measures the **saved** provider responses, not a fresh execution of the reviewer.
+
+| Metric | A: Direct-Diff | B: Direct-Context | C: VerifyCraft |
+| :--- | ---: | ---: | ---: |
+| Actionable precision | 61.5% | 76.9% | **90.9%** |
+| Defect recall (10 expected defects) | 80.0% | 100.0% | **100.0%** |
+| False positives | 5 | 3 | 1 |
+| Invalid code locations | 0 | 0 | 0 |
+| Requirements accuracy (7 requirements) | 57.1% | 71.4% | 57.1% |
+
+Gate status: `PENDING_MAINTAINER_APPROVAL` → approved for release. The evaluation cases are curated synthetic fixtures that model real bug patterns; they are not a sample of production pull requests. See [docs/evaluation/v0.2.0-review-quality.md](docs/evaluation/v0.2.0-review-quality.md).
+
+---
+
+## Known Limitations (`v0.2.0`)
+
+1. **Heuristic requirement-evidence linking.** `ReviewEngine._has_requirement_evidence()` connects a finding to a requirement through constraint-term overlap, generic-vocabulary filtering, and cosmetic/documentation exclusions. It prevents known false positives but is **not a semantic proof of non-compliance**. Requirement assessments still need human review; structured evidence handling is planned for `v0.3.0` instead of further textual exceptions.
+2. **Known replay mismatch on `REQ-PERF-01`.** In `dev_05_ambiguous_requirement_timeout`, the Variant B replay returns `appears_satisfied` while the ground truth is `unclear` (the specification lacks timeout acceptance criteria). The mismatch pre-dates the `v0.2.0` classification fixes and the ground truth has intentionally not been altered.
+3. **No isolation for untrusted code.** `trusted_local` is not a sandbox; untrusted code is blocked rather than executed.
 
 ---
 
 ## How Public Releases are Created
 
 Public releases are fully automated and secured via GitHub Actions:
-- **Trigger**: Pushing a version tag matching `v*` (e.g. `v0.1.0`).
-- **Ancestry Gate**: The tag commit must exist on the `origin/main` branch.
+- **Trigger**: Pushing a version tag matching `v*` (e.g. `v0.2.0`).
+- **Ref Gate**: The tag must point at the current HEAD of `origin/main`.
 - **Version Gate**: Standard library `tomllib` validates that the tag matches `pyproject.toml` and `verifycraft.__version__`.
 - **Verification Gates**: Runs the complete linter (`ruff`), type checker (`mypy`), test suite (`pytest`), and benchmark evaluation before building.
 - **Trusted Publishing**: Releases are published to PyPI via OpenID Connect (OIDC) through the `pypi` GitHub Environment. No static API tokens are used.
@@ -407,6 +450,9 @@ For full release procedures and configuration instructions, see [RELEASING.md](d
 
 - 📘 **[Architecture & Foundations (`docs/FOUNDATIONS.md`)](docs/FOUNDATIONS.md)**: Architectural principles, contracts, and safety boundaries.
 - 🗺️ **[Roadmap & Delivery Sequence (`docs/ROADMAP.md`)](docs/ROADMAP.md)**: Outcome-based milestone sequence (`v0.1.0` to `v0.5.0`).
+- 🔌 **[Provider Matrix (`docs/providers.md`)](docs/providers.md)**: Supported cloud, enterprise, local, and model-free review providers.
+- 📊 **[Review Quality Evaluation (`docs/evaluation/v0.2.0-review-quality.md`)](docs/evaluation/v0.2.0-review-quality.md)**: Benchmark methodology, release gate, and `v0.2.0` results.
+- 📝 **[Release Notes (`docs/releases/`)](docs/releases/)**: [`v0.2.0`](docs/releases/v0.2.0-release-notes.md), [`v0.1.0`](docs/releases/v0.1.0-release-notes.md).
 - 🚀 **[Release Guide (`docs/RELEASING.md`)](docs/RELEASING.md)**: Versioning, PyPI Trusted Publishing, and release checklists.
 - 🤝 **[Contributing Guidelines (`CONTRIBUTING.md`)](CONTRIBUTING.md)**: Code conventions, branch patterns, and development setup.
 
